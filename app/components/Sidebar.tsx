@@ -48,18 +48,20 @@ export default function Sidebar() {
     <aside 
       className={`
         bg-white border-r border-gray-200 h-screen flex flex-col transition-all duration-300 ease-in-out sticky top-0 z-40
-        ${isCollapsed ? 'w-20' : 'w-64'}
+        /* RESPONSIVIDADE AQUI: */
+        /* No mobile (padrão) fixa w-20 (ícones). No Desktop (md) obedece o isCollapsed */
+        w-20 md:${isCollapsed ? 'w-20' : 'w-64'}
       `}
     >
-      <div className="p-4 flex items-center justify-between h-20">
+      <div className={`p-4 flex items-center h-20 ${!isCollapsed ? 'justify-between' : 'justify-center'}`}>
         {!isCollapsed && (
-          <span className="text-xl font-bold text-[#1e6a8d] tracking-tight ml-2 truncate">
+          <span className="text-xl font-bold text-[#1e6a8d] tracking-tight ml-2 truncate hidden md:block">
             Chamados a Servir
           </span>
         )}
         <button 
           onClick={() => setIsCollapsed(!isCollapsed)}
-          className="p-2 rounded-full hover:bg-gray-100 text-gray-400 hover:text-[#1e6a8d] transition-colors ml-auto"
+          className="p-2 rounded-full hover:bg-gray-100 text-gray-400 hover:text-[#1e6a8d] transition-colors ml-auto hidden md:block"
         >
           {isCollapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
         </button>
@@ -67,8 +69,6 @@ export default function Sidebar() {
 
       <nav className="flex-1 px-3 space-y-2 mt-4">
         {menuItems.map((item) => {
-          // LÓGICA DE ATIVAÇÃO REFORÇADA
-          // Se for dashboard, ele ativa se a rota for "/" OU se a URL contiver "dashboard"
           const isDashboard = item.name === 'Dashboard'
           const isActive = mounted && (
             pathname === item.path || 
@@ -82,6 +82,8 @@ export default function Sidebar() {
               href={item.path}
               className={`
                 flex items-center gap-3 px-3 py-3 rounded-xl transition-all relative group
+                /* Centraliza no mobile, e no desktop obedece o estado */
+                justify-center md:${!isCollapsed ? 'justify-start' : 'justify-center'}
                 ${isActive 
                   ? 'bg-[#1e6a8d] text-white shadow-md' 
                   : 'text-gray-500 hover:bg-gray-50 hover:text-[#1e6a8d]'
@@ -95,17 +97,24 @@ export default function Sidebar() {
               
               {!isCollapsed && (
                 <span className={`
-                  font-semibold text-sm antialiased whitespace-nowrap
+                  font-semibold text-sm antialiased whitespace-nowrap hidden md:block
                   ${isActive ? 'text-white' : ''} 
                 `}>
                   {item.name}
                 </span>
               )}
 
-              {isCollapsed && (
-                <div className="absolute left-full ml-4 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none shadow-xl">
-                  {item.name}
-                </div>
+              {/* Tooltip agora aparece no mobile também se segurar, ou hover no desktop quando colapsado */}
+              {(isCollapsed || true) && ( 
+                /* O 'true' força o tooltip a existir no DOM para CSS controlar, mas usamos classes do Tailwind para mostrar só quando necessário */
+               <div className={`
+                 absolute left-full ml-4 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg 
+                 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none shadow-xl
+                 /* Mostra tooltip no mobile (pois está sempre colapsado visualmente) ou no desktop se estiver colapsado */
+                 md:${!isCollapsed ? 'hidden' : 'block'}
+               `}>
+                 {item.name}
+               </div>
               )}
             </Link>
           )
@@ -117,11 +126,12 @@ export default function Sidebar() {
           onClick={handleLogout}
           className={`
             w-full flex items-center gap-3 px-3 py-3 rounded-xl text-gray-500 hover:bg-red-50 hover:text-red-600 transition-all group relative
-            ${isCollapsed ? 'justify-center' : ''}
+            /* Centraliza no mobile, ajusta no desktop */
+            justify-center md:${isCollapsed ? 'justify-center' : 'justify-start'}
           `}
         >
           <LogOut size={22} className="flex-shrink-0" />
-          {!isCollapsed && <span className="font-semibold text-sm">Sair do Sistema</span>}
+          {!isCollapsed && <span className="font-semibold text-sm hidden md:block">Sair do Sistema</span>}
         </button>
       </div>
     </aside>
