@@ -60,9 +60,9 @@ export default function LayoutClient({
           isLoginPage ? 'bg-[#f3f4f6]' : 'bg-gray-50/50'
         }`}
       >
-        <div className={`${isLoginPage ? '' : 'p-8 max-w-7xl mx-auto'}`}>
-          {children}
-        </div>
+        <div className={`${isLoginPage ? '' : 'px-2 py-4 md:p-8 max-w-7xl mx-auto w-full'}`}>
+  {children}
+</div>
       </main>
     </div>
   )

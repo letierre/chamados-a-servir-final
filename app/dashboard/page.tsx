@@ -27,7 +27,6 @@ type DashboardData = {
   value: number
 }
 
-// Cores do tema
 const COLORS = {
   primary: '#006184',
   secondary: '#105970',
@@ -35,16 +34,16 @@ const COLORS = {
   background: '#f8fafc',
 }
 
-// Ícones ajustados para serem responsivos (menores no mobile)
+// Ícones responsivos
 const ICON_MAP: Record<string, any> = {
-  frequencia_sacramental: <Church className="w-5 h-5 md:w-6 md:h-6 text-sky-600" />,
-  batismo_converso: <UserPlus className="w-5 h-5 md:w-6 md:h-6 text-emerald-600" />,
-  membros_retornando_a_igreja: <Users className="w-5 h-5 md:w-6 md:h-6 text-orange-600" />,
-  membros_participantes: <Users className="w-5 h-5 md:w-6 md:h-6 text-blue-600" />,
-  membros_jejuando: <Heart className="w-5 h-5 md:w-6 md:h-6 text-rose-600" />,
-  missionario_servindo_missao_do_brasil: <BookOpen className="w-5 h-5 md:w-6 md:h-6 text-indigo-600" />,
-  recomendacao_templo_com_investidura: <Award className="w-5 h-5 md:w-6 md:h-6 text-amber-600" />,
-  recomendacao_templo_sem_investidura: <Award className="w-5 h-5 md:w-6 md:h-6 text-yellow-600" />,
+  frequencia_sacramental: <Church className="w-4 h-4 md:w-6 md:h-6 text-sky-600" />,
+  batismo_converso: <UserPlus className="w-4 h-4 md:w-6 md:h-6 text-emerald-600" />,
+  membros_retornando_a_igreja: <Users className="w-4 h-4 md:w-6 md:h-6 text-orange-600" />,
+  membros_participantes: <Users className="w-4 h-4 md:w-6 md:h-6 text-blue-600" />,
+  membros_jejuando: <Heart className="w-4 h-4 md:w-6 md:h-6 text-rose-600" />,
+  missionario_servindo_missao_do_brasil: <BookOpen className="w-4 h-4 md:w-6 md:h-6 text-indigo-600" />,
+  recomendacao_templo_com_investidura: <Award className="w-4 h-4 md:w-6 md:h-6 text-amber-600" />,
+  recomendacao_templo_sem_investidura: <Award className="w-4 h-4 md:w-6 md:h-6 text-yellow-600" />,
 }
 
 export default function DashboardPage() {
@@ -61,7 +60,7 @@ export default function DashboardPage() {
   const [targetMatrix, setTargetMatrix] = useState<Record<string, Record<string, number>>>({})
   const [stakeTotals, setStakeTotals] = useState<Record<string, number>>({})
 
-  // Funções auxiliares (Lógica mantida idêntica)
+  // --- Lógica Mantida ---
   const getCustomWeekNumber = (d: Date) => {
     const date = new Date(d.getTime());
     date.setHours(0, 0, 0, 0);
@@ -195,62 +194,49 @@ export default function DashboardPage() {
   }
 
   return (
-    // 'w-full' garante que ele ocupe o espaço disponível sem estourar se houver sidebar
-    <main className="w-full min-h-screen p-3 md:p-8 font-sans" style={{ backgroundColor: COLORS.background }}>
-      <div className="max-w-[1400px] mx-auto space-y-6 md:space-y-12">
+    // Removido padding excessivo do container principal para aproveitar a tela
+    <main className="w-full min-h-screen font-sans">
+      <div className="w-full mx-auto space-y-6">
         
-        {/* HEADER: Mais compacto no mobile */}
-        <header className="py-2 md:py-4 text-center md:text-left">
-          <h1 className="text-2xl md:text-5xl font-black tracking-tight leading-tight" style={{ color: COLORS.title }}>
-            Dashboard da Estaca
+        {/* HEADER: Ajustado para centralizar e ocupar menos espaço */}
+        <header className="pt-2 pb-4 text-center md:text-left">
+          <h1 className="text-2xl md:text-4xl font-black tracking-tight leading-tight" style={{ color: COLORS.title }}>
+            Dashboard
           </h1>
-          <p className="text-slate-500 font-bold uppercase text-[10px] md:text-sm tracking-widest mt-1 md:mt-2">
+          <p className="text-slate-500 font-bold uppercase text-[10px] md:text-xs tracking-widest mt-1">
             Gestão de Indicadores
           </p>
         </header>
 
         {/* BLOCO 1: RESULTADOS */}
-        <section className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden p-4 md:p-10 transition-all">
+        <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden p-4 md:p-8 transition-all">
           
-          {/* Cabeçalho do Card: No mobile vira coluna, no desk linha */}
-          <div className="flex flex-col md:flex-row items-center justify-between mb-6 gap-4 border-b border-slate-100 pb-6">
-            
-            {/* Título da Seção */}
-            <div className="flex items-center gap-3 w-full md:w-auto">
-              <div className="p-3 bg-sky-50 rounded-2xl shrink-0">
-                <TrendingUp className="w-6 h-6 text-sky-700" />
-              </div>
-              <div className="text-left">
-                <h2 className="text-lg md:text-2xl font-black text-slate-800 leading-tight">Resultados</h2>
-                <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wide">Consolidação atual</p>
-              </div>
-            </div>
-
-            {/* Seletor de Data: Full width no mobile para ficar fácil de clicar */}
-            <div className="flex items-center justify-between w-full md:w-auto bg-slate-50 p-1.5 rounded-xl border border-slate-200">
-              <button onClick={() => changeWeek(-1)} className="p-2 md:p-3 bg-white hover:bg-slate-100 rounded-lg text-slate-500 shadow-sm transition-all active:scale-95">
+          <div className="flex flex-col md:flex-row items-center justify-between mb-4 md:mb-6 gap-4 border-b border-slate-100 pb-4">
+            {/* Seletor de Data Full Width Mobile */}
+            <div className="flex items-center justify-between w-full md:w-auto bg-slate-50 p-1 rounded-xl border border-slate-200">
+              <button onClick={() => changeWeek(-1)} className="p-2 md:p-3 hover:bg-white rounded-lg text-slate-500 shadow-sm transition-all active:scale-95">
                 <ChevronLeft className="w-4 h-4 md:w-5 md:h-5" />
               </button>
               
-              <div className="flex items-center gap-2 px-3">
-                <Calendar className="w-4 h-4 text-sky-600 hidden sm:block" />
-                <span className="font-black text-slate-700 text-xs md:text-lg whitespace-nowrap">{weekLabel}</span>
+              <div className="flex items-center gap-2 px-2">
+                <Calendar className="w-3 h-3 text-sky-600 hidden sm:block" />
+                <span className="font-black text-slate-700 text-xs md:text-base whitespace-nowrap">{weekLabel}</span>
               </div>
               
-              <button onClick={() => changeWeek(1)} className="p-2 md:p-3 bg-white hover:bg-slate-100 rounded-lg text-slate-500 shadow-sm transition-all active:scale-95">
+              <button onClick={() => changeWeek(1)} className="p-2 md:p-3 hover:bg-white rounded-lg text-slate-500 shadow-sm transition-all active:scale-95">
                 <ChevronRight className="w-4 h-4 md:w-5 md:h-5" />
               </button>
             </div>
           </div>
 
-          {/* GRID INTELIGENTE: 2 Colunas no mobile, 4 no desktop */}
-          <div className={`grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-8 ${loading ? 'opacity-50' : ''}`}>
+          {/* GRID INTELIGENTE: Layout ajustado para evitar quebra de texto */}
+          <div className={`grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-6 ${loading ? 'opacity-50' : ''}`}>
             {mainCards.map((card) => (
-              <div key={card.id} className="group bg-white p-4 md:p-8 rounded-2xl border border-slate-100 shadow-sm hover:border-sky-200 hover:shadow-lg transition-all duration-300 flex flex-col justify-between h-full">
+              <div key={card.id} className="group bg-white p-3 md:p-6 rounded-xl md:rounded-2xl border border-slate-100 shadow-sm hover:border-sky-200 hover:shadow-md transition-all duration-300 flex flex-col justify-between h-full min-h-[100px]">
                 
-                <div className="flex justify-between items-start mb-2 md:mb-6">
-                  {/* Nome do indicador menor no mobile */}
-                  <span className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-wider leading-snug pr-2 line-clamp-2 md:line-clamp-none h-8 md:h-auto">
+                <div className="flex justify-between items-start mb-2">
+                  {/* Fonte reduzida para mobile e quebra de linha permitida */}
+                  <span className="text-[9px] md:text-xs font-black text-slate-500 uppercase tracking-wide leading-3 pr-1 line-clamp-3">
                     {card.display_name}
                   </span>
                   <div className="p-1.5 md:p-3 bg-slate-50 group-hover:bg-sky-50 rounded-lg md:rounded-2xl transition-colors shrink-0">
@@ -258,8 +244,8 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                {/* Valor Grande */}
-                <p className="text-3xl md:text-6xl font-black text-slate-800 tracking-tight group-hover:text-sky-700 transition-colors mt-auto">
+                {/* Valor ajustado */}
+                <p className="text-2xl md:text-5xl font-black text-slate-800 tracking-tight group-hover:text-sky-700 transition-colors mt-auto">
                   {card.value}
                 </p>
               </div>
@@ -267,84 +253,78 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* BLOCO 2: METAS ANUAIS */}
-        <section className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden">
-          <div className="p-4 md:p-10 border-b border-slate-100 flex flex-col md:flex-row items-center justify-between bg-slate-50/80 gap-4 md:gap-6">
+        {/* BLOCO 2: METAS */}
+        <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden">
+          <div className="p-4 md:p-8 border-b border-slate-100 flex flex-col md:flex-row items-center justify-between bg-slate-50/50 gap-4">
             
             <div className="flex items-center gap-3 w-full md:w-auto">
-              <div className="p-3 bg-amber-50 rounded-2xl shrink-0">
-                <Target className="w-6 h-6 text-amber-600" />
+              <div className="p-2 md:p-3 bg-amber-50 rounded-xl shrink-0">
+                <Target className="w-5 h-5 md:w-6 md:h-6 text-amber-600" />
               </div>
               <div>
-                <h2 className="text-lg md:text-2xl font-black text-slate-800">Metas {selectedYear}</h2>
-                <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wide">Planejamento</p>
+                <h2 className="text-base md:text-2xl font-black text-slate-800">Metas {selectedYear}</h2>
               </div>
             </div>
 
-            {/* Seletor de Ano scrollável horizontalmente no mobile */}
-            <div className="w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
-                <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 shadow-sm min-w-max mx-auto md:mx-0">
-                {[2025, 2026, 2027].map((year) => (
-                    <button
-                    key={year}
-                    onClick={() => setSelectedYear(year)}
-                    className={`px-4 py-2 rounded-lg text-xs md:text-sm font-black transition-all ${
-                        selectedYear === year 
-                        ? 'bg-sky-700 text-white shadow-md' 
-                        : 'text-slate-500 hover:bg-slate-50'
-                    }`}
-                    >
-                    {year}
-                    </button>
-                ))}
-                </div>
+            <div className="flex gap-1 bg-white p-1 rounded-lg border border-slate-200 shadow-sm w-full md:w-auto overflow-x-auto">
+              {[2025, 2026, 2027].map((year) => (
+                <button
+                  key={year}
+                  onClick={() => setSelectedYear(year)}
+                  className={`flex-1 md:flex-none px-3 py-1.5 rounded-md text-[10px] md:text-sm font-black transition-all whitespace-nowrap ${
+                    selectedYear === year 
+                    ? 'bg-sky-700 text-white shadow-sm' 
+                    : 'text-slate-500 hover:bg-slate-50'
+                  }`}
+                >
+                  {year}
+                </button>
+              ))}
             </div>
           </div>
 
-          <div className="overflow-x-auto relative">
+          <div className="overflow-x-auto relative pb-2">
             {definitions.wards.length === 0 ? (
-               <div className="p-12 text-center text-slate-500 font-bold text-sm">Carregando dados...</div>
+               <div className="p-8 text-center text-slate-400 font-bold text-xs">Carregando...</div>
             ) : (
             <table className="w-full text-left border-collapse whitespace-nowrap">
               <thead>
                 <tr className="bg-slate-100/50">
-                  {/* Coluna Fixa (Sticky) com sombra lateral para indicar scroll */}
-                  <th className="sticky left-0 bg-slate-50 z-20 p-4 text-[10px] md:text-xs font-black text-slate-500 uppercase tracking-widest border-b border-r border-slate-200 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.1)] w-[140px] md:w-[220px]">
+                  <th className="sticky left-0 bg-slate-100 z-20 p-3 text-[9px] md:text-xs font-black text-slate-500 uppercase tracking-widest border-b border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[100px]">
                     Unidade
                   </th>
                   {definitions.indicators.map(ind => (
-                    <th key={ind.id} className="p-4 text-[10px] md:text-xs font-black text-slate-500 uppercase tracking-widest border-b border-slate-200 text-center align-bottom min-w-[120px]">
-                      <div className="flex flex-col items-center gap-2">
+                    <th key={ind.id} className="p-3 text-[9px] md:text-xs font-black text-slate-500 uppercase tracking-widest border-b border-slate-200 text-center align-bottom min-w-[80px] md:min-w-[120px]">
+                      <div className="flex flex-col items-center gap-1">
                         {ICON_MAP[ind.slug]}
-                        <span className="whitespace-normal max-w-[100px] leading-tight">{ind.display_name}</span>
+                        {/* Oculta nome longo no mobile se necessário, ou usa quebra */}
+                        <span className="whitespace-normal max-w-[80px] leading-tight hidden md:block">{ind.display_name}</span>
+                        <span className="md:hidden truncate max-w-[60px]">{ind.slug.split('_')[0]}...</span>
                       </div>
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {/* Linha de Totais */}
                 <tr className="bg-sky-50/30 border-b border-sky-100">
-                  <td className="sticky left-0 bg-sky-50 z-10 p-4 border-r border-sky-200 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.05)]">
-                    <span className="font-black text-sky-800 uppercase text-[10px] md:text-xs tracking-wider">Total Estaca</span>
+                  <td className="sticky left-0 bg-sky-50 z-10 p-3 border-r border-sky-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
+                    <span className="font-black text-sky-800 uppercase text-[9px] md:text-xs">Total</span>
                   </td>
                   {definitions.indicators.map(ind => (
-                    <td key={ind.id} className="p-4 text-center">
-                      <span className="text-lg md:text-2xl font-black text-sky-900">
+                    <td key={ind.id} className="p-3 text-center">
+                      <span className="text-sm md:text-xl font-black text-sky-900">
                         {stakeTotals[ind.id] || 0}
                       </span>
                     </td>
                   ))}
                 </tr>
-
-                {/* Linhas das Alas */}
                 {definitions.wards.map(ward => (
                   <tr key={ward.id} className="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0">
-                    <td className="sticky left-0 bg-white hover:bg-slate-50 z-10 p-4 font-bold text-slate-700 text-xs md:text-sm border-r border-slate-100 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.05)]">
+                    <td className="sticky left-0 bg-white hover:bg-slate-50 z-10 p-3 font-bold text-slate-700 text-[10px] md:text-sm border-r border-slate-100 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
                       {ward.name}
                     </td>
                     {definitions.indicators.map(ind => (
-                      <td key={ind.id} className="p-4 text-center font-bold text-slate-600 text-sm md:text-lg">
+                      <td key={ind.id} className="p-3 text-center font-bold text-slate-600 text-xs md:text-base">
                         {targetMatrix[ward.id]?.[ind.id] !== undefined 
                           ? targetMatrix[ward.id][ind.id] 
                           : <span className="text-slate-300">-</span>}
@@ -358,16 +338,9 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* RODAPÉ */}
-        <footer className="mt-8 py-8 border-t border-slate-200 text-center space-y-4 px-4">
-          <p className="font-bold text-slate-400 uppercase text-[10px] tracking-widest">
-            Sistema não oficial
-          </p>
-          <div className="flex justify-center opacity-30">
-             <Church className="w-5 h-5 text-slate-400" />
-          </div>
+        <footer className="py-6 border-t border-slate-200 text-center opacity-40">
+           <Church className="w-4 h-4 text-slate-400 mx-auto" />
         </footer>
-
       </div>
     </main>
   )
