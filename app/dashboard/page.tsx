@@ -7,7 +7,7 @@ import {
   Award, BookOpen, ChevronLeft, ChevronRight, Target
 } from 'lucide-react'
 
-// --- Tipos para corrigir os erros vermelhos ---
+// --- Tipos ---
 type Indicator = {
   id: string
   slug: string
@@ -31,10 +31,11 @@ type DashboardData = {
 const COLORS = {
   primary: '#006184',
   secondary: '#105970',
-  title: '#0e4f66', // Escurecido para melhor contraste
+  title: '#0e4f66',
   background: '#f8fafc',
 }
 
+// Ícones ajustados para serem responsivos (menores no mobile)
 const ICON_MAP: Record<string, any> = {
   frequencia_sacramental: <Church className="w-5 h-5 md:w-6 md:h-6 text-sky-600" />,
   batismo_converso: <UserPlus className="w-5 h-5 md:w-6 md:h-6 text-emerald-600" />,
@@ -50,7 +51,6 @@ export default function DashboardPage() {
   const supabase = createClient()
   const [loading, setLoading] = useState(true)
   
-  // Estados tipados
   const [mainCards, setMainCards] = useState<DashboardData[]>([])
   const [referenceDate, setReferenceDate] = useState<Date | null>(null)
   const [weekLabel, setWeekLabel] = useState('')
@@ -58,10 +58,10 @@ export default function DashboardPage() {
   const [selectedYear, setSelectedYear] = useState(2026) 
   const [definitions, setDefinitions] = useState<{wards: Ward[], indicators: Indicator[]}>({ wards: [], indicators: [] })
   
-  // Matrizes tipadas para evitar erro de índice
   const [targetMatrix, setTargetMatrix] = useState<Record<string, Record<string, number>>>({})
   const [stakeTotals, setStakeTotals] = useState<Record<string, number>>({})
 
+  // Funções auxiliares (Lógica mantida idêntica)
   const getCustomWeekNumber = (d: Date) => {
     const date = new Date(d.getTime());
     date.setHours(0, 0, 0, 0);
@@ -129,16 +129,12 @@ export default function DashboardPage() {
 
   const loadTargetsForYear = useCallback(async (year: number) => {
     try {
-      // Busca segura com conversão de número
       const { data: targets, error } = await supabase
         .from('targets')
         .select('*')
         .eq('year', Number(year));
 
-      if (error) {
-        console.error("Erro Supabase:", error);
-        return;
-      }
+      if (error) { return; }
 
       const matrix: Record<string, Record<string, number>> = {};
       const totals: Record<string, number> = {};
@@ -199,62 +195,71 @@ export default function DashboardPage() {
   }
 
   return (
-    <main className="min-h-screen p-3 sm:p-4 md:p-8 font-sans" style={{ backgroundColor: COLORS.background }}>
-      <div className="max-w-[1400px] mx-auto space-y-8 md:space-y-12">
+    // 'w-full' garante que ele ocupe o espaço disponível sem estourar se houver sidebar
+    <main className="w-full min-h-screen p-3 md:p-8 font-sans" style={{ backgroundColor: COLORS.background }}>
+      <div className="max-w-[1400px] mx-auto space-y-6 md:space-y-12">
         
-        {/* HEADER */}
+        {/* HEADER: Mais compacto no mobile */}
         <header className="py-2 md:py-4 text-center md:text-left">
-          <h1 className="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight" style={{ color: COLORS.title }}>
+          <h1 className="text-2xl md:text-5xl font-black tracking-tight leading-tight" style={{ color: COLORS.title }}>
             Dashboard da Estaca
           </h1>
-          <p className="text-slate-600 font-bold uppercase text-xs sm:text-sm tracking-widest mt-2">
-            Gestão de Indicadores e Metas
+          <p className="text-slate-500 font-bold uppercase text-[10px] md:text-sm tracking-widest mt-1 md:mt-2">
+            Gestão de Indicadores
           </p>
         </header>
 
-        {/* BLOCO 1: RESULTADOS (Cards Maiores) */}
-        <section className="bg-white rounded-[1.5rem] md:rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden p-5 md:p-10 transition-all">
-          <div className="flex flex-col lg:flex-row items-center justify-between mb-8 gap-6 border-b border-slate-100 pb-8">
-            <div className="flex items-center gap-4 w-full md:w-auto">
-              <div className="p-3 md:p-4 bg-sky-50 rounded-2xl shrink-0">
-                <TrendingUp className="w-6 h-6 md:w-8 md:h-8 text-sky-700" />
+        {/* BLOCO 1: RESULTADOS */}
+        <section className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden p-4 md:p-10 transition-all">
+          
+          {/* Cabeçalho do Card: No mobile vira coluna, no desk linha */}
+          <div className="flex flex-col md:flex-row items-center justify-between mb-6 gap-4 border-b border-slate-100 pb-6">
+            
+            {/* Título da Seção */}
+            <div className="flex items-center gap-3 w-full md:w-auto">
+              <div className="p-3 bg-sky-50 rounded-2xl shrink-0">
+                <TrendingUp className="w-6 h-6 text-sky-700" />
               </div>
               <div className="text-left">
-                <h2 className="text-xl md:text-2xl font-black text-slate-800">Resultados da Estaca</h2>
-                <p className="text-slate-500 text-[10px] md:text-xs font-bold uppercase tracking-wide">Consolidação atual</p>
+                <h2 className="text-lg md:text-2xl font-black text-slate-800 leading-tight">Resultados</h2>
+                <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wide">Consolidação atual</p>
               </div>
             </div>
 
-            <div className="flex items-center justify-between w-full lg:w-auto gap-2 bg-slate-50 p-2 rounded-2xl border border-slate-200">
-              <button onClick={() => changeWeek(-1)} className="p-2 md:p-3 hover:bg-white rounded-xl transition-all text-slate-500 hover:text-sky-700 hover:shadow-sm shrink-0">
-                <ChevronLeft className="w-5 h-5 md:w-6 md:h-6" />
+            {/* Seletor de Data: Full width no mobile para ficar fácil de clicar */}
+            <div className="flex items-center justify-between w-full md:w-auto bg-slate-50 p-1.5 rounded-xl border border-slate-200">
+              <button onClick={() => changeWeek(-1)} className="p-2 md:p-3 bg-white hover:bg-slate-100 rounded-lg text-slate-500 shadow-sm transition-all active:scale-95">
+                <ChevronLeft className="w-4 h-4 md:w-5 md:h-5" />
               </button>
               
-              <div className="flex items-center gap-2 md:gap-3 px-2 md:px-6 justify-center flex-1 lg:min-w-[220px]">
-                <Calendar className="w-4 h-4 md:w-5 md:h-5 text-sky-600 hidden sm:block" />
-                <span className="font-black text-slate-700 text-sm md:text-lg whitespace-nowrap text-center">{weekLabel}</span>
+              <div className="flex items-center gap-2 px-3">
+                <Calendar className="w-4 h-4 text-sky-600 hidden sm:block" />
+                <span className="font-black text-slate-700 text-xs md:text-lg whitespace-nowrap">{weekLabel}</span>
               </div>
               
-              <button onClick={() => changeWeek(1)} className="p-2 md:p-3 hover:bg-white rounded-xl transition-all text-slate-500 hover:text-sky-700 hover:shadow-sm shrink-0">
-                <ChevronRight className="w-5 h-5 md:w-6 md:h-6" />
+              <button onClick={() => changeWeek(1)} className="p-2 md:p-3 bg-white hover:bg-slate-100 rounded-lg text-slate-500 shadow-sm transition-all active:scale-95">
+                <ChevronRight className="w-4 h-4 md:w-5 md:h-5" />
               </button>
             </div>
           </div>
 
-          <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-8 ${loading ? 'opacity-50' : ''}`}>
+          {/* GRID INTELIGENTE: 2 Colunas no mobile, 4 no desktop */}
+          <div className={`grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-8 ${loading ? 'opacity-50' : ''}`}>
             {mainCards.map((card) => (
-              <div key={card.id} className="group bg-white p-6 md:p-8 rounded-2xl md:rounded-[2rem] border-2 border-slate-50 shadow-sm hover:border-sky-100 hover:shadow-xl transition-all duration-300">
-                <div className="flex justify-between items-start mb-4 md:mb-6">
-                  {/* Título mais escuro e legível */}
-                  <span className="text-[10px] md:text-xs font-black text-slate-500 uppercase tracking-widest max-w-[140px] leading-relaxed pr-2">
+              <div key={card.id} className="group bg-white p-4 md:p-8 rounded-2xl border border-slate-100 shadow-sm hover:border-sky-200 hover:shadow-lg transition-all duration-300 flex flex-col justify-between h-full">
+                
+                <div className="flex justify-between items-start mb-2 md:mb-6">
+                  {/* Nome do indicador menor no mobile */}
+                  <span className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-wider leading-snug pr-2 line-clamp-2 md:line-clamp-none h-8 md:h-auto">
                     {card.display_name}
                   </span>
-                  <div className="p-2 md:p-3 bg-slate-50 group-hover:bg-sky-50 rounded-xl md:rounded-2xl transition-colors shrink-0">
+                  <div className="p-1.5 md:p-3 bg-slate-50 group-hover:bg-sky-50 rounded-lg md:rounded-2xl transition-colors shrink-0">
                     {ICON_MAP[card.slug]}
                   </div>
                 </div>
-                {/* Número bem maior */}
-                <p className="text-4xl md:text-5xl lg:text-6xl font-black text-slate-800 tracking-tighter group-hover:text-sky-800 transition-colors">
+
+                {/* Valor Grande */}
+                <p className="text-3xl md:text-6xl font-black text-slate-800 tracking-tight group-hover:text-sky-700 transition-colors mt-auto">
                   {card.value}
                 </p>
               </div>
@@ -263,51 +268,55 @@ export default function DashboardPage() {
         </section>
 
         {/* BLOCO 2: METAS ANUAIS */}
-        <section className="bg-white rounded-[1.5rem] md:rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden">
-          <div className="p-6 md:p-10 border-b border-slate-100 flex flex-col lg:flex-row items-center justify-between bg-slate-50/80 gap-6">
-            <div className="flex items-center gap-4 w-full md:w-auto">
-              <div className="p-3 md:p-4 bg-amber-50 rounded-2xl shrink-0">
-                <Target className="w-6 h-6 md:w-8 md:h-8 text-amber-600" />
+        <section className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden">
+          <div className="p-4 md:p-10 border-b border-slate-100 flex flex-col md:flex-row items-center justify-between bg-slate-50/80 gap-4 md:gap-6">
+            
+            <div className="flex items-center gap-3 w-full md:w-auto">
+              <div className="p-3 bg-amber-50 rounded-2xl shrink-0">
+                <Target className="w-6 h-6 text-amber-600" />
               </div>
               <div>
-                <h2 className="text-xl md:text-2xl font-black text-slate-800">Metas Anuais - {selectedYear}</h2>
-                <p className="text-slate-500 text-[10px] md:text-xs font-bold uppercase tracking-wide">Planejamento por unidade</p>
+                <h2 className="text-lg md:text-2xl font-black text-slate-800">Metas {selectedYear}</h2>
+                <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wide">Planejamento</p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 bg-white p-2 rounded-2xl border border-slate-200 shadow-sm w-full lg:w-auto overflow-x-auto">
-              {[2025, 2026, 2027].map((year) => (
-                <button
-                  key={year}
-                  onClick={() => setSelectedYear(year)}
-                  className={`flex-1 lg:flex-none px-4 md:px-6 py-2 md:py-3 rounded-xl text-xs md:text-sm font-black transition-all whitespace-nowrap ${
-                    selectedYear === year 
-                    ? 'bg-sky-700 text-white shadow-md transform scale-105' 
-                    : 'text-slate-500 hover:bg-slate-50'
-                  }`}
-                >
-                  {year}
-                </button>
-              ))}
+            {/* Seletor de Ano scrollável horizontalmente no mobile */}
+            <div className="w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
+                <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 shadow-sm min-w-max mx-auto md:mx-0">
+                {[2025, 2026, 2027].map((year) => (
+                    <button
+                    key={year}
+                    onClick={() => setSelectedYear(year)}
+                    className={`px-4 py-2 rounded-lg text-xs md:text-sm font-black transition-all ${
+                        selectedYear === year 
+                        ? 'bg-sky-700 text-white shadow-md' 
+                        : 'text-slate-500 hover:bg-slate-50'
+                    }`}
+                    >
+                    {year}
+                    </button>
+                ))}
+                </div>
             </div>
           </div>
 
-          <div className="overflow-x-auto pb-2">
+          <div className="overflow-x-auto relative">
             {definitions.wards.length === 0 ? (
-               <div className="p-12 text-center text-slate-500 font-bold text-lg">Carregando dados...</div>
+               <div className="p-12 text-center text-slate-500 font-bold text-sm">Carregando dados...</div>
             ) : (
-            <table className="w-full text-left border-collapse min-w-[1000px]">
+            <table className="w-full text-left border-collapse whitespace-nowrap">
               <thead>
                 <tr className="bg-slate-100/50">
-                  {/* Sticky Column Header */}
-                  <th className="sticky left-0 bg-slate-100/90 backdrop-blur-sm z-20 p-4 md:p-6 text-[10px] md:text-xs font-black text-slate-500 uppercase tracking-widest border-b border-r border-slate-200 w-[160px] md:w-[220px] shadow-[4px_0_8px_-4px_rgba(0,0,0,0.05)]">
+                  {/* Coluna Fixa (Sticky) com sombra lateral para indicar scroll */}
+                  <th className="sticky left-0 bg-slate-50 z-20 p-4 text-[10px] md:text-xs font-black text-slate-500 uppercase tracking-widest border-b border-r border-slate-200 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.1)] w-[140px] md:w-[220px]">
                     Unidade
                   </th>
                   {definitions.indicators.map(ind => (
-                    <th key={ind.id} className="p-4 md:p-6 text-[10px] md:text-xs font-black text-slate-500 uppercase tracking-widest border-b border-slate-200 text-center align-bottom min-w-[140px]">
-                      <div className="flex flex-col items-center gap-3 h-full justify-end">
+                    <th key={ind.id} className="p-4 text-[10px] md:text-xs font-black text-slate-500 uppercase tracking-widest border-b border-slate-200 text-center align-bottom min-w-[120px]">
+                      <div className="flex flex-col items-center gap-2">
                         {ICON_MAP[ind.slug]}
-                        <span className="leading-tight whitespace-normal max-w-[120px]">{ind.display_name}</span>
+                        <span className="whitespace-normal max-w-[100px] leading-tight">{ind.display_name}</span>
                       </div>
                     </th>
                   ))}
@@ -315,14 +324,13 @@ export default function DashboardPage() {
               </thead>
               <tbody>
                 {/* Linha de Totais */}
-                <tr className="bg-sky-50/50 border-b-2 border-sky-100">
-                   {/* Sticky Total Label */}
-                  <td className="sticky left-0 bg-sky-50 z-10 p-4 md:p-6 border-r border-sky-100 shadow-[4px_0_8px_-4px_rgba(0,0,0,0.05)]">
-                    <span className="font-black text-sky-800 uppercase text-[10px] md:text-xs tracking-wider">Métrica Estaca (Soma)</span>
+                <tr className="bg-sky-50/30 border-b border-sky-100">
+                  <td className="sticky left-0 bg-sky-50 z-10 p-4 border-r border-sky-200 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.05)]">
+                    <span className="font-black text-sky-800 uppercase text-[10px] md:text-xs tracking-wider">Total Estaca</span>
                   </td>
                   {definitions.indicators.map(ind => (
-                    <td key={ind.id} className="p-4 md:p-6 text-center">
-                      <span className="text-xl md:text-2xl font-black text-sky-900">
+                    <td key={ind.id} className="p-4 text-center">
+                      <span className="text-lg md:text-2xl font-black text-sky-900">
                         {stakeTotals[ind.id] || 0}
                       </span>
                     </td>
@@ -331,13 +339,12 @@ export default function DashboardPage() {
 
                 {/* Linhas das Alas */}
                 {definitions.wards.map(ward => (
-                  <tr key={ward.id} className="hover:bg-slate-50 transition-colors group border-b border-slate-100 last:border-0">
-                    {/* Sticky Ward Name */}
-                    <td className="sticky left-0 bg-white group-hover:bg-slate-50 z-10 p-4 md:p-6 font-bold text-slate-700 text-xs md:text-sm border-r border-slate-100 shadow-[4px_0_8px_-4px_rgba(0,0,0,0.05)] transition-colors">
+                  <tr key={ward.id} className="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0">
+                    <td className="sticky left-0 bg-white hover:bg-slate-50 z-10 p-4 font-bold text-slate-700 text-xs md:text-sm border-r border-slate-100 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.05)]">
                       {ward.name}
                     </td>
                     {definitions.indicators.map(ind => (
-                      <td key={ind.id} className="p-4 md:p-6 text-center font-bold text-slate-600 text-base md:text-lg">
+                      <td key={ind.id} className="p-4 text-center font-bold text-slate-600 text-sm md:text-lg">
                         {targetMatrix[ward.id]?.[ind.id] !== undefined 
                           ? targetMatrix[ward.id][ind.id] 
                           : <span className="text-slate-300">-</span>}
@@ -351,16 +358,12 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* RODAPÉ SOLICITADO */}
-        <footer className="mt-8 md:mt-16 py-8 md:py-12 border-t border-slate-200 text-center space-y-4 px-4">
-          <p className="font-bold text-slate-400 uppercase text-[10px] md:text-xs tracking-[0.2em]">
-            Sistema não oficial de A Igreja de Jesus Cristo dos Santos dos Últimos Dias
+        {/* RODAPÉ */}
+        <footer className="mt-8 py-8 border-t border-slate-200 text-center space-y-4 px-4">
+          <p className="font-bold text-slate-400 uppercase text-[10px] tracking-widest">
+            Sistema não oficial
           </p>
-          <p className="text-slate-500 max-w-2xl mx-auto text-xs md:text-sm leading-relaxed">
-            Criada por voluntários com objetivo de ajudar na administração dos indicadores das unidades da 
-            <strong className="text-slate-700"> Estaca Santa Cruz do Sul Brasil</strong>.
-          </p>
-          <div className="pt-4 flex justify-center gap-4 opacity-50">
+          <div className="flex justify-center opacity-30">
              <Church className="w-5 h-5 text-slate-400" />
           </div>
         </footer>
