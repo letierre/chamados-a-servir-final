@@ -47,15 +47,21 @@ export default function Sidebar() {
   return (
     <aside 
       className={`
-        bg-white border-r border-gray-200 h-screen flex flex-col transition-all duration-300 ease-in-out sticky top-0 z-40
-        /* RESPONSIVIDADE AQUI: */
-        /* No mobile (padrão) fixa w-20 (ícones). No Desktop (md) obedece o isCollapsed */
-        w-20 md:${isCollapsed ? 'w-20' : 'w-64'}
+        bg-white border-r border-gray-200 h-screen flex flex-col transition-all duration-300 ease-in-out sticky top-0 z-40 overflow-hidden
+        /* CORREÇÃO AQUI: Classes completas para o Tailwind reconhecer */
+        /* Base (Mobile e Desktop colapsado): w-20 */
+        /* Desktop expandido: md:w-64 */
+        w-20 ${!isCollapsed ? 'md:w-64' : ''}
       `}
     >
-      <div className={`p-4 flex items-center h-20 ${!isCollapsed ? 'justify-between' : 'justify-center'}`}>
+      <div className={`
+        p-4 flex items-center h-20 transition-all duration-300
+        /* Centraliza se estiver colapsado (ou mobile), espaça se estiver aberto no PC */
+        ${!isCollapsed ? 'justify-center md:justify-between' : 'justify-center'}
+      `}>
         {!isCollapsed && (
-          <span className="text-xl font-bold text-[#1e6a8d] tracking-tight ml-2 truncate hidden md:block">
+          /* Oculta no mobile (hidden), mostra no PC (md:block) */
+          <span className="text-xl font-bold text-[#1e6a8d] tracking-tight ml-2 truncate hidden md:block whitespace-nowrap">
             Chamados a Servir
           </span>
         )}
@@ -82,8 +88,8 @@ export default function Sidebar() {
               href={item.path}
               className={`
                 flex items-center gap-3 px-3 py-3 rounded-xl transition-all relative group
-                /* Centraliza no mobile, e no desktop obedece o estado */
-                justify-center md:${!isCollapsed ? 'justify-start' : 'justify-center'}
+                /* Alinhamento: Centro no mobile/colapsado, Início no PC aberto */
+                justify-center ${!isCollapsed ? 'md:justify-start' : ''}
                 ${isActive 
                   ? 'bg-[#1e6a8d] text-white shadow-md' 
                   : 'text-gray-500 hover:bg-gray-50 hover:text-[#1e6a8d]'
@@ -97,25 +103,22 @@ export default function Sidebar() {
               
               {!isCollapsed && (
                 <span className={`
-                  font-semibold text-sm antialiased whitespace-nowrap hidden md:block
+                  font-semibold text-sm antialiased whitespace-nowrap hidden md:block transition-opacity duration-300
                   ${isActive ? 'text-white' : ''} 
                 `}>
                   {item.name}
                 </span>
               )}
 
-              {/* Tooltip agora aparece no mobile também se segurar, ou hover no desktop quando colapsado */}
-              {(isCollapsed || true) && ( 
-                /* O 'true' força o tooltip a existir no DOM para CSS controlar, mas usamos classes do Tailwind para mostrar só quando necessário */
-               <div className={`
-                 absolute left-full ml-4 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg 
-                 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none shadow-xl
-                 /* Mostra tooltip no mobile (pois está sempre colapsado visualmente) ou no desktop se estiver colapsado */
-                 md:${!isCollapsed ? 'hidden' : 'block'}
-               `}>
-                 {item.name}
-               </div>
-              )}
+              {/* Tooltip: Mostra no mobile (hover não funciona bem em touch, mas mantemos lógica) ou PC colapsado */}
+              <div className={`
+                absolute left-full ml-4 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg 
+                opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none shadow-xl
+                /* Só aparece se estiver colapsado no PC ou se estiver no mobile (que é sempre colapsado) */
+                ${!isCollapsed ? 'md:hidden' : 'block'}
+              `}>
+                {item.name}
+              </div>
             </Link>
           )
         })}
@@ -126,12 +129,15 @@ export default function Sidebar() {
           onClick={handleLogout}
           className={`
             w-full flex items-center gap-3 px-3 py-3 rounded-xl text-gray-500 hover:bg-red-50 hover:text-red-600 transition-all group relative
-            /* Centraliza no mobile, ajusta no desktop */
-            justify-center md:${isCollapsed ? 'justify-center' : 'justify-start'}
+            justify-center ${!isCollapsed ? 'md:justify-start' : ''}
           `}
         >
           <LogOut size={22} className="flex-shrink-0" />
-          {!isCollapsed && <span className="font-semibold text-sm hidden md:block">Sair do Sistema</span>}
+          {!isCollapsed && (
+            <span className="font-semibold text-sm hidden md:block whitespace-nowrap">
+              Sair do Sistema
+            </span>
+          )}
         </button>
       </div>
     </aside>
