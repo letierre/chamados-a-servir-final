@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createClient } from '../../lib/supabase/client'
 import { 
   History, Calendar, Hash, Building2, Target, 
   ChevronLeft, ChevronRight, Clock, Loader2,
-  X, Check, ChevronDown, Edit2, Trash2, Save, AlertTriangle, Search, Filter
+  X, Check, ChevronDown, Edit2, Trash2, Save, AlertTriangle, Filter, Search
 } from 'lucide-react'
 
 // --- CONFIGURAÇÃO VISUAL ---
@@ -37,6 +37,11 @@ type HistoryEntry = {
   indicators: { id: string, display_name: string }
 }
 
+type DateRange = {
+  start: string
+  end: string
+}
+
 export default function HistoricoPage() {
   const supabase = createClient()
   
@@ -45,19 +50,22 @@ export default function HistoricoPage() {
   const [loading, setLoading] = useState(true)
   const [totalCount, setTotalCount] = useState(0)
   
-  // Opções de Filtro
+  // Opções de Filtro (Carregadas do Banco)
   const [filterOptions, setFilterOptions] = useState<{
-    wards: any[], indicators: any[], weeks: any[]
+    wards: {id: string, name: string}[], 
+    indicators: {id: string, display_name: string}[], 
+    weeks: {date: string, label: string}[]
   }>({ wards: [], indicators: [], weeks: [] })
 
   // Filtros Ativos
   const [selectedWards, setSelectedWards] = useState<string[]>([])
   const [selectedIndicators, setSelectedIndicators] = useState<string[]>([])
   const [selectedWeekDate, setSelectedWeekDate] = useState<string>('') 
-  const [searchTerm, setSearchTerm] = useState('')
+  const [dateRange, setDateRange] = useState<DateRange>({ start: '', end: '' })
 
   // UI Control
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null)
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false) // Controle do painel mobile
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(15)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
@@ -66,6 +74,12 @@ export default function HistoricoPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
   const [editForm, setEditForm] = useState({ value: 0, week_start: '' })
+
+  // Helper para fechar dropdowns ao clicar fora (opcional, simplificado aqui pelo controle de estado)
+  const toggleDropdown = (name: string) => {
+    if (activeDropdown === name) setActiveDropdown(null)
+    else setActiveDropdown(name)
+  }
 
   // --- CARGA DE OPÇÕES ---
   useEffect(() => {
@@ -76,17 +90,26 @@ export default function HistoricoPage() {
         supabase.from('weekly_indicator_data').select('week_start').order('week_start', { ascending: false })
       ])
 
-      const uniqueWeeks = Array.from(new Set(weeksRes.data?.map(i => i.week_start))).map(date => {
-        const { week, year } = getWeekNumber(new Date(date + 'T12:00:00'))
-        return { date, label: `Semana ${week} (${year})` }
-      })
+      // Lógica Melhorada para Semanas Únicas:
+      // Agrupa por Rótulo (ex: "Semana 1 (2026)") para evitar duplicatas visuais
+      const distinctWeeksMap = new Map();
+      weeksRes.data?.forEach(item => {
+        const { week, year } = getWeekNumber(new Date(item.week_start + 'T12:00:00'));
+        const label = `Semana ${week} (${year})`;
+        // Se já existe esse rótulo, não sobrescreve (mantém a data mais recente ou a primeira encontrada)
+        if (!distinctWeeksMap.has(label)) {
+          distinctWeeksMap.set(label, { date: item.week_start, label });
+        }
+      });
+      
+      const uniqueWeeks = Array.from(distinctWeeksMap.values());
 
       setFilterOptions({ wards: w.data || [], indicators: i.data || [], weeks: uniqueWeeks })
     }
     loadOptions()
   }, [supabase])
 
-  // --- BUSCA ---
+  // --- BUSCA COM NOVOS FILTROS ---
   const fetchHistory = useCallback(async () => {
     setLoading(true)
     try {
@@ -94,9 +117,18 @@ export default function HistoricoPage() {
         .from('weekly_indicator_data')
         .select(`id, value, week_start, created_at, wards!inner(id, name), indicators!inner(id, display_name)`, { count: 'exact' })
       
-      if (selectedWards.length) query = query.in('ward_id', selectedWards)
-      if (selectedIndicators.length) query = query.in('indicator_id', selectedIndicators)
+      // Filtro Unidade (Multi)
+      if (selectedWards.length > 0) query = query.in('ward_id', selectedWards)
+      
+      // Filtro Indicador (Multi)
+      if (selectedIndicators.length > 0) query = query.in('indicator_id', selectedIndicators)
+      
+      // Filtro Semana (Único)
       if (selectedWeekDate) query = query.eq('week_start', selectedWeekDate)
+
+      // Filtro Data Lançamento (Range)
+      if (dateRange.start) query = query.gte('created_at', `${dateRange.start}T00:00:00`)
+      if (dateRange.end) query = query.lte('created_at', `${dateRange.end}T23:59:59`)
       
       const { data: res, count } = await query
         .order('week_start', { ascending: false })
@@ -108,7 +140,7 @@ export default function HistoricoPage() {
     } finally {
       setLoading(false)
     }
-  }, [supabase, page, pageSize, selectedWards, selectedIndicators, selectedWeekDate])
+  }, [supabase, page, pageSize, selectedWards, selectedIndicators, selectedWeekDate, dateRange])
 
   useEffect(() => { fetchHistory() }, [fetchHistory])
 
@@ -138,15 +170,33 @@ export default function HistoricoPage() {
     setActionLoading(false)
   }
 
+  // Helper para limpar tudo
+  const clearFilters = () => {
+    setSelectedWards([])
+    setSelectedIndicators([])
+    setSelectedWeekDate('')
+    setDateRange({ start: '', end: '' })
+  }
+
+  const hasActiveFilters = selectedWards.length > 0 || selectedIndicators.length > 0 || selectedWeekDate || dateRange.start || dateRange.end;
+
+  // --- SUB-COMPONENTES DE FILTRO (Visual) ---
+  const CheckboxItem = ({ label, checked, onClick }: { label: string, checked: boolean, onClick: () => void }) => (
+    <div onClick={onClick} className="flex items-center gap-3 p-2.5 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors group">
+      <div className={`w-4 h-4 rounded border flex items-center justify-center transition-all ${checked ? 'bg-sky-600 border-sky-600' : 'border-slate-300 group-hover:border-sky-400'}`}>
+        {checked && <Check size={10} className="text-white" />}
+      </div>
+      <span className={`text-xs font-medium ${checked ? 'text-sky-700 font-bold' : 'text-slate-600'}`}>{label}</span>
+    </div>
+  )
+
   return (
-    // --- RESPONSIVO: Padding ajustado (p-4 no mobile, p-12 no desktop)
     <main className="min-h-screen p-4 md:p-8 lg:p-12" style={{ backgroundColor: THEME.bg }}>
       <div className="max-w-7xl mx-auto space-y-4 md:space-y-6">
         
-        {/* HEADER ESTRATÉGICO */}
+        {/* HEADER */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 md:p-6 rounded-3xl shadow-sm border border-slate-200">
           <div>
-            {/* --- RESPONSIVO: Texto menor no mobile */}
             <h1 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">Histórico</h1>
             <div className="flex items-center gap-2 mt-1">
               <span className="flex h-2 w-2 rounded-full bg-emerald-500"></span>
@@ -157,33 +207,26 @@ export default function HistoricoPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-             {/* --- RESPONSIVO: Botão de filtro de semana visível no mobile também se necessário */}
-            <div className="relative md:hidden w-full">
-                <button 
-                  onClick={() => setActiveDropdown(activeDropdown === 'week_mobile' ? null : 'week_mobile')}
-                  className={`flex items-center justify-between w-full bg-slate-50 border border-slate-200 text-slate-600 text-xs font-bold rounded-xl px-4 py-2.5 ${selectedWeekDate ? 'text-sky-600 border-sky-200 bg-sky-50' : ''}`}
-                >
-                   <span className="flex items-center gap-2"><Calendar size={14}/> {selectedWeekDate ? 'Semana Filtrada' : 'Filtrar Semana'}</span>
-                   <ChevronDown size={14} />
-                </button>
-                {activeDropdown === 'week_mobile' && (
-                     <div className="absolute top-full left-0 mt-2 w-full bg-white shadow-xl rounded-xl border border-slate-100 z-50 p-2 max-h-60 overflow-y-auto">
-                        <div onClick={() => {setSelectedWeekDate(''); setActiveDropdown(null)}} className="p-3 text-xs font-bold hover:bg-slate-50 cursor-pointer rounded-lg border-b border-slate-50 mb-1">Todas as Semanas</div>
-                        {filterOptions.weeks.map(w => (
-                          <div key={w.date} onClick={() => {setSelectedWeekDate(w.date); setActiveDropdown(null)}} className="p-3 text-xs hover:bg-sky-50 cursor-pointer rounded-lg flex justify-between items-center text-slate-600">
-                            {w.label} {selectedWeekDate === w.date && <Check size={14} className="text-sky-600"/>}
-                          </div>
-                        ))}
-                     </div>
-                )}
+            {/* BOTÃO FILTROS MOBILE */}
+            <div className="md:hidden w-full">
+               <button 
+                  onClick={() => setMobileFiltersOpen(!mobileFiltersOpen)}
+                  className={`flex items-center justify-between w-full border text-xs font-bold rounded-xl px-4 py-3 transition-all ${hasActiveFilters ? 'bg-sky-50 border-sky-200 text-sky-700' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
+               >
+                  <div className="flex items-center gap-2">
+                    <Filter size={14} />
+                    {hasActiveFilters ? 'Filtros Ativos' : 'Filtrar Dados'}
+                  </div>
+                  {mobileFiltersOpen ? <ChevronDown size={14} className="rotate-180 transition-transform"/> : <ChevronDown size={14} className="transition-transform"/>}
+               </button>
             </div>
 
-            {(selectedWards.length > 0 || selectedIndicators.length > 0 || selectedWeekDate) && (
+            {hasActiveFilters && (
               <button 
-                onClick={() => { setSelectedWards([]); setSelectedIndicators([]); setSelectedWeekDate(''); }}
-                className="flex-1 md:flex-none text-center text-xs font-bold text-rose-500 hover:bg-rose-50 border border-rose-100 md:border-transparent px-4 py-2 rounded-xl md:rounded-full transition-all"
+                onClick={clearFilters}
+                className="hidden md:block text-xs font-bold text-rose-500 hover:bg-rose-50 px-4 py-2.5 rounded-xl transition-all border border-transparent hover:border-rose-100"
               >
-                Limpar
+                Limpar Filtros
               </button>
             )}
             
@@ -201,6 +244,86 @@ export default function HistoricoPage() {
           </div>
         </div>
 
+        {/* --- ÁREA DE FILTROS MOBILE (EXPANSÍVEL) --- */}
+        {mobileFiltersOpen && (
+          <div className="md:hidden bg-white p-5 rounded-3xl shadow-lg border border-slate-100 space-y-5 animate-in slide-in-from-top-2">
+            
+            {/* Filtro Semana */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Semana de Referência</label>
+              <select 
+                value={selectedWeekDate}
+                onChange={(e) => setSelectedWeekDate(e.target.value)}
+                className="w-full bg-slate-50 border-slate-200 text-slate-700 text-sm font-bold rounded-xl p-3 outline-none"
+              >
+                <option value="">Todas as Semanas</option>
+                {filterOptions.weeks.map(w => (
+                  <option key={w.date} value={w.date}>{w.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Filtro Unidade (Multi-Mobile Simulado) */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Unidades ({selectedWards.length})</label>
+              <div className="max-h-32 overflow-y-auto border border-slate-100 rounded-xl p-2 bg-slate-50">
+                {filterOptions.wards.map(ward => (
+                  <CheckboxItem 
+                    key={ward.id} 
+                    label={ward.name} 
+                    checked={selectedWards.includes(ward.id)}
+                    onClick={() => {
+                      setSelectedWards(prev => prev.includes(ward.id) ? prev.filter(id => id !== ward.id) : [...prev, ward.id])
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Filtro Indicador (Multi-Mobile Simulado) */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Indicadores ({selectedIndicators.length})</label>
+              <div className="max-h-32 overflow-y-auto border border-slate-100 rounded-xl p-2 bg-slate-50">
+                {filterOptions.indicators.map(ind => (
+                  <CheckboxItem 
+                    key={ind.id} 
+                    label={ind.display_name} 
+                    checked={selectedIndicators.includes(ind.id)}
+                    onClick={() => {
+                      setSelectedIndicators(prev => prev.includes(ind.id) ? prev.filter(id => id !== ind.id) : [...prev, ind.id])
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Filtro Data Lançamento */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Data de Lançamento</label>
+              <div className="flex gap-2">
+                <input 
+                  type="date" 
+                  value={dateRange.start} 
+                  onChange={e => setDateRange({...dateRange, start: e.target.value})}
+                  className="flex-1 bg-slate-50 border-slate-200 text-slate-600 text-xs font-bold rounded-xl p-2.5 outline-none"
+                />
+                <input 
+                  type="date" 
+                  value={dateRange.end} 
+                  onChange={e => setDateRange({...dateRange, end: e.target.value})}
+                  className="flex-1 bg-slate-50 border-slate-200 text-slate-600 text-xs font-bold rounded-xl p-2.5 outline-none"
+                />
+              </div>
+            </div>
+
+            {hasActiveFilters && (
+               <button onClick={clearFilters} className="w-full py-3 bg-rose-50 text-rose-600 font-bold rounded-xl text-xs">
+                 Limpar Todos os Filtros
+               </button>
+            )}
+          </div>
+        )}
+
         {/* CONTAINER DE DADOS */}
         <div className="relative">
           {loading && (
@@ -210,46 +333,156 @@ export default function HistoricoPage() {
           )}
 
           {/* --- VERSÃO DESKTOP (TABELA) --- */}
-          {/* Esconde em telas pequenas (hidden), mostra em telas médias pra cima (md:block) */}
-          <div className="hidden md:block bg-white rounded-[2.5rem] shadow-xl shadow-slate-200/60 border border-slate-200 overflow-hidden">
-            <div className="overflow-x-auto">
+          <div className="hidden md:block bg-white rounded-[2.5rem] shadow-xl shadow-slate-200/60 border border-slate-200 overflow-visible">
+            <div className="overflow-visible"> 
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50/50 border-b border-slate-100">
-                    <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest relative">
+                    
+                    {/* COLUNA: SEMANA */}
+                    <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest relative w-[18%]">
                       <button 
-                        onClick={() => setActiveDropdown(activeDropdown === 'week' ? null : 'week')}
+                        onClick={() => toggleDropdown('week')}
                         className={`flex items-center gap-2 hover:text-sky-600 transition-colors ${selectedWeekDate ? 'text-sky-600' : ''}`}
                       >
-                        <Calendar size={14} /> Semana Ref. <ChevronDown size={12} />
+                        <div className="flex items-center gap-2"><Calendar size={14} /> Semana</div>
+                        <ChevronDown size={12} className={`transition-transform ${activeDropdown === 'week' ? 'rotate-180' : ''}`} />
                       </button>
+                      {/* Dropdown Semana */}
                       {activeDropdown === 'week' && (
-                         <div className="absolute top-full left-4 mt-2 w-56 bg-white shadow-2xl rounded-2xl border border-slate-100 z-50 p-2 max-h-60 overflow-y-auto animate-in slide-in-from-top-2">
-                           <div onClick={() => {setSelectedWeekDate(''); setActiveDropdown(null)}} className="p-2 text-xs font-bold hover:bg-slate-50 cursor-pointer rounded-lg">Todas as Semanas</div>
-                           {filterOptions.weeks.map(w => (
-                             <div key={w.date} onClick={() => {setSelectedWeekDate(w.date); setActiveDropdown(null)}} className="p-2 text-xs hover:bg-sky-50 cursor-pointer rounded-lg flex justify-between items-center">
-                               {w.label} {selectedWeekDate === w.date && <Check size={12} />}
+                          <div className="absolute top-full left-4 mt-2 w-64 bg-white shadow-2xl rounded-2xl border border-slate-100 z-50 p-2 max-h-80 overflow-y-auto animate-in slide-in-from-top-2">
+                             <div className="p-3 border-b border-slate-50 mb-1">
+                                <span className="text-xs font-bold text-slate-800">Filtrar por Semana</span>
                              </div>
-                           ))}
-                        </div>
+                            <div onClick={() => {setSelectedWeekDate(''); setActiveDropdown(null)}} className="p-2.5 text-xs font-medium hover:bg-slate-50 cursor-pointer rounded-lg text-slate-500 mb-1">
+                               Todas as Semanas
+                            </div>
+                            {filterOptions.weeks.map(w => (
+                              <div key={w.date} onClick={() => {setSelectedWeekDate(w.date); setActiveDropdown(null)}} className={`p-2.5 text-xs cursor-pointer rounded-lg flex justify-between items-center mb-1 transition-colors ${selectedWeekDate === w.date ? 'bg-sky-50 text-sky-700 font-bold' : 'hover:bg-slate-50 text-slate-600'}`}>
+                                {w.label} {selectedWeekDate === w.date && <Check size={12} />}
+                              </div>
+                            ))}
+                          </div>
                       )}
                     </th>
-                    <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                       <div className="flex items-center gap-2"><Building2 size={14} /> Unidade</div>
+
+                    {/* COLUNA: UNIDADE (MULTI-SELECT) */}
+                    <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest relative w-[25%]">
+                        <button 
+                           onClick={() => toggleDropdown('wards')}
+                           className={`flex items-center gap-2 hover:text-sky-600 transition-colors ${selectedWards.length > 0 ? 'text-sky-600' : ''}`}
+                        >
+                           <div className="flex items-center gap-2"><Building2 size={14} /> Unidade {selectedWards.length > 0 && `(${selectedWards.length})`}</div>
+                           <ChevronDown size={12} className={`transition-transform ${activeDropdown === 'wards' ? 'rotate-180' : ''}`} />
+                        </button>
+                        {/* Dropdown Unidade */}
+                        {activeDropdown === 'wards' && (
+                           <div className="absolute top-full left-0 mt-2 w-72 bg-white shadow-2xl rounded-2xl border border-slate-100 z-50 p-3 max-h-80 overflow-hidden flex flex-col animate-in slide-in-from-top-2">
+                              <div className="flex justify-between items-center mb-2 pb-2 border-b border-slate-50">
+                                 <span className="text-xs font-bold text-slate-800">Selecionar Unidades</span>
+                                 {selectedWards.length > 0 && <button onClick={() => setSelectedWards([])} className="text-[10px] font-bold text-rose-500 hover:text-rose-600">Limpar</button>}
+                              </div>
+                              <div className="overflow-y-auto flex-1 pr-1">
+                                 {filterOptions.wards.map(ward => (
+                                    <CheckboxItem 
+                                       key={ward.id} 
+                                       label={ward.name} 
+                                       checked={selectedWards.includes(ward.id)} 
+                                       onClick={() => {
+                                          setSelectedWards(prev => prev.includes(ward.id) ? prev.filter(id => id !== ward.id) : [...prev, ward.id])
+                                       }}
+                                    />
+                                 ))}
+                              </div>
+                           </div>
+                        )}
                     </th>
-                    <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                       <div className="flex items-center gap-2"><Target size={14} /> Indicador</div>
+
+                    {/* COLUNA: INDICADOR (MULTI-SELECT) */}
+                    <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest relative w-[25%]">
+                        <button 
+                           onClick={() => toggleDropdown('indicators')}
+                           className={`flex items-center gap-2 hover:text-sky-600 transition-colors ${selectedIndicators.length > 0 ? 'text-sky-600' : ''}`}
+                        >
+                           <div className="flex items-center gap-2"><Target size={14} /> Indicador {selectedIndicators.length > 0 && `(${selectedIndicators.length})`}</div>
+                           <ChevronDown size={12} className={`transition-transform ${activeDropdown === 'indicators' ? 'rotate-180' : ''}`} />
+                        </button>
+                         {/* Dropdown Indicador */}
+                         {activeDropdown === 'indicators' && (
+                           <div className="absolute top-full left-0 mt-2 w-80 bg-white shadow-2xl rounded-2xl border border-slate-100 z-50 p-3 max-h-80 overflow-hidden flex flex-col animate-in slide-in-from-top-2">
+                              <div className="flex justify-between items-center mb-2 pb-2 border-b border-slate-50">
+                                 <span className="text-xs font-bold text-slate-800">Selecionar Indicadores</span>
+                                 {selectedIndicators.length > 0 && <button onClick={() => setSelectedIndicators([])} className="text-[10px] font-bold text-rose-500 hover:text-rose-600">Limpar</button>}
+                              </div>
+                              <div className="overflow-y-auto flex-1 pr-1">
+                                 {filterOptions.indicators.map(ind => (
+                                    <CheckboxItem 
+                                       key={ind.id} 
+                                       label={ind.display_name} 
+                                       checked={selectedIndicators.includes(ind.id)} 
+                                       onClick={() => {
+                                          setSelectedIndicators(prev => prev.includes(ind.id) ? prev.filter(id => id !== ind.id) : [...prev, ind.id])
+                                       }}
+                                    />
+                                 ))}
+                              </div>
+                           </div>
+                        )}
                     </th>
-                    <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">
+
+                    <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center w-[10%]">
                        <div className="flex items-center justify-center gap-2"><Hash size={14} /> Valor</div>
                     </th>
-                    <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">
-                       <div className="flex items-center justify-end gap-2"><Clock size={14} /> Lançamento</div>
+
+                    {/* COLUNA: LANÇAMENTO (DATE RANGE) */}
+                    <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right relative w-[20%]">
+                        <button 
+                           onClick={() => toggleDropdown('launch')}
+                           className={`flex items-center justify-end w-full gap-2 hover:text-sky-600 transition-colors ${(dateRange.start || dateRange.end) ? 'text-sky-600' : ''}`}
+                        >
+                           <div className="flex items-center gap-2"><Clock size={14} /> Lançamento</div>
+                           <ChevronDown size={12} className={`transition-transform ${activeDropdown === 'launch' ? 'rotate-180' : ''}`} />
+                        </button>
+                        {/* Dropdown Data */}
+                        {activeDropdown === 'launch' && (
+                           <div className="absolute top-full right-4 mt-2 w-72 bg-white shadow-2xl rounded-2xl border border-slate-100 z-50 p-4 animate-in slide-in-from-top-2 cursor-default">
+                              <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-50">
+                                 <span className="text-xs font-bold text-slate-800">Intervalo de Data</span>
+                                 {(dateRange.start || dateRange.end) && <button onClick={() => setDateRange({start:'', end:''})} className="text-[10px] font-bold text-rose-500 hover:text-rose-600">Limpar</button>}
+                              </div>
+                              <div className="space-y-3">
+                                 <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase">De:</label>
+                                    <input 
+                                       type="date" 
+                                       value={dateRange.start}
+                                       onChange={e => setDateRange({...dateRange, start: e.target.value})}
+                                       className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-medium text-slate-600 outline-none focus:border-sky-400"
+                                    />
+                                 </div>
+                                 <div className="space-y-1">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase">Até:</label>
+                                    <input 
+                                       type="date" 
+                                       value={dateRange.end}
+                                       onChange={e => setDateRange({...dateRange, end: e.target.value})}
+                                       className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-medium text-slate-600 outline-none focus:border-sky-400"
+                                    />
+                                 </div>
+                              </div>
+                           </div>
+                        )}
                     </th>
-                    <th className="p-6 w-20"></th>
+
+                    <th className="p-6 w-[2%]"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
+                  {data.length === 0 && !loading && (
+                     <tr>
+                        <td colSpan={6} className="p-12 text-center text-slate-400 text-sm font-medium">Nenhum registro encontrado com os filtros selecionados.</td>
+                     </tr>
+                  )}
                   {data.map((row) => {
                     const { week, year } = getWeekNumber(new Date(row.week_start + 'T12:00:00'))
                     return (
@@ -288,6 +521,7 @@ export default function HistoricoPage() {
                               setEditForm({ value: row.value, week_start: row.week_start });
                               setShowDeleteConfirm(false);
                               setIsEditModalOpen(true);
+                              setActiveDropdown(null); // Fecha qualquer filtro aberto
                             }}
                             className="p-2 text-slate-300 hover:text-sky-600 hover:bg-sky-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"
                           >
@@ -303,8 +537,12 @@ export default function HistoricoPage() {
           </div>
 
           {/* --- VERSÃO MOBILE (CARDS) --- */}
-          {/* Esconde em desktop (md:hidden), mostra em mobile */}
           <div className="md:hidden space-y-3">
+             {data.length === 0 && !loading && (
+               <div className="text-center py-10 text-slate-400 text-sm font-medium bg-white rounded-3xl border border-slate-100">
+                  Nenhum registro encontrado.
+               </div>
+            )}
             {data.map((row) => {
               const { week, year } = getWeekNumber(new Date(row.week_start + 'T12:00:00'))
               return (
@@ -345,13 +583,13 @@ export default function HistoricoPage() {
 
                   {/* Card Footer: Data e Ação */}
                   <div className="flex justify-between items-end mt-2 pt-3 border-t border-slate-50">
-                     <div className="flex items-center gap-1.5 text-slate-400">
+                      <div className="flex items-center gap-1.5 text-slate-400">
                         <Clock size={12} />
                         <span className="text-[10px] font-medium">
                           {new Date(row.created_at).toLocaleDateString('pt-BR')} às {new Date(row.created_at).toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}
                         </span>
-                     </div>
-                     <button 
+                      </div>
+                      <button 
                         onClick={() => {
                           setEditingRow(row);
                           setEditForm({ value: row.value, week_start: row.week_start });
@@ -368,10 +606,10 @@ export default function HistoricoPage() {
             })}
           </div>
 
-          {/* PAGINAÇÃO (COMPARTILHADA) */}
+          {/* PAGINAÇÃO */}
           <div className="mt-4 md:mt-0 p-4 md:p-6 bg-white md:bg-slate-50/50 md:border-t border-slate-100 rounded-3xl md:rounded-t-none md:rounded-b-[2.5rem] flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm md:shadow-none border border-slate-200 md:border-0">
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest order-2 sm:order-1">
-              Página {page} de {Math.ceil(totalCount / pageSize)}
+              Página {page} de {Math.max(1, Math.ceil(totalCount / pageSize))}
             </p>
             <div className="flex items-center gap-2 order-1 sm:order-2 w-full sm:w-auto justify-center">
               <button 
@@ -395,9 +633,8 @@ export default function HistoricoPage() {
 
       {/* MODAL DE EDIÇÃO AVANÇADO */}
       {isEditModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" onClick={() => setIsEditModalOpen(false)} />
-          {/* --- RESPONSIVO: Ajuste de largura (w-full max-w-md) funciona bem, adicionei mx-auto para garantir */}
           <div className="relative bg-white w-full max-w-md mx-auto rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
             <div className="p-6 md:p-8 overflow-y-auto">
               {!showDeleteConfirm ? (
