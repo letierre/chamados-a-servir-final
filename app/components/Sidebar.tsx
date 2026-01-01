@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { createClient } from '@supabase/supabase-js'
+// CORREÇÃO 1: Importar do seu lib local, que gerencia os Cookies corretamente
+import { createClient } from '../../lib/supabase/client' 
 import { 
   LayoutDashboard, 
   History, 
@@ -19,20 +20,24 @@ export default function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
   
+  // CORREÇÃO 2: Instanciar usando o helper correto do Next.js
+  const supabase = createClient()
+
   useEffect(() => {
     setMounted(true)
   }, [])
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
-
   const handleLogout = async () => {
     try {
+      // 1. Remove o token dos cookies e do local storage
       await supabase.auth.signOut()
-      router.push('/login') 
+      
+      // 2. Atualiza o estado do servidor (Middleware vai perceber que não tem mais cookie)
       router.refresh()
+      
+      // 3. Redireciona para o login (replace é melhor que push aqui para não voltar no "Back")
+      router.replace('/login') 
+      
     } catch (error) {
       console.error('Erro ao sair:', error)
     }
@@ -48,19 +53,14 @@ export default function Sidebar() {
     <aside 
       className={`
         bg-white border-r border-gray-200 h-screen flex flex-col transition-all duration-300 ease-in-out sticky top-0 z-40 overflow-hidden
-        /* CORREÇÃO AQUI: Classes completas para o Tailwind reconhecer */
-        /* Base (Mobile e Desktop colapsado): w-20 */
-        /* Desktop expandido: md:w-64 */
         w-20 ${!isCollapsed ? 'md:w-64' : ''}
       `}
     >
       <div className={`
         p-4 flex items-center h-20 transition-all duration-300
-        /* Centraliza se estiver colapsado (ou mobile), espaça se estiver aberto no PC */
         ${!isCollapsed ? 'justify-center md:justify-between' : 'justify-center'}
       `}>
         {!isCollapsed && (
-          /* Oculta no mobile (hidden), mostra no PC (md:block) */
           <span className="text-xl font-bold text-[#1e6a8d] tracking-tight ml-2 truncate hidden md:block whitespace-nowrap">
             Chamados a Servir
           </span>
@@ -88,7 +88,6 @@ export default function Sidebar() {
               href={item.path}
               className={`
                 flex items-center gap-3 px-3 py-3 rounded-xl transition-all relative group
-                /* Alinhamento: Centro no mobile/colapsado, Início no PC aberto */
                 justify-center ${!isCollapsed ? 'md:justify-start' : ''}
                 ${isActive 
                   ? 'bg-[#1e6a8d] text-white shadow-md' 
@@ -110,11 +109,9 @@ export default function Sidebar() {
                 </span>
               )}
 
-              {/* Tooltip: Mostra no mobile (hover não funciona bem em touch, mas mantemos lógica) ou PC colapsado */}
               <div className={`
                 absolute left-full ml-4 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg 
                 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none shadow-xl
-                /* Só aparece se estiver colapsado no PC ou se estiver no mobile (que é sempre colapsado) */
                 ${!isCollapsed ? 'md:hidden' : 'block'}
               `}>
                 {item.name}
