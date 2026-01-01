@@ -10,7 +10,7 @@ import {
 
 // Definição de cores e estilos para consistência
 const THEME = {
-  primary: '#0069a8', // Cor solicitada para o botão
+  primary: '#0069a8',
   primaryHover: '#00588d',
   textTitle: '#157493',
   bg: '#f8fafc',
@@ -108,7 +108,7 @@ export default function LancamentosPage() {
         if (error.code === '23505') {
           setMessage({ 
             type: 'error', 
-            text: 'Ops! Esse indicador já foi lançado para esta ala nesta mesma data. Verifique o histórico.' 
+            text: 'Ops! Esse indicador já foi lançado para esta ala nesta mesma data.' 
           })
           return
         }
@@ -135,28 +135,34 @@ export default function LancamentosPage() {
   }
 
   return (
-    <main className="min-h-screen p-4 md:p-12 font-sans" style={{ backgroundColor: THEME.bg }}>
+    /* Ajuste de Padding: p-4 no mobile, p-12 no desktop para dar ar */
+    <main className="min-h-screen p-4 md:p-12 font-sans transition-all" style={{ backgroundColor: THEME.bg }}>
       <div className="mx-auto max-w-3xl">
         
         {/* HEADER */}
-        <div className="mb-10 text-center md:text-left">
-          <h1 className="text-4xl font-black tracking-tight mb-2" style={{ color: THEME.textTitle }}>Lançamento de Dados</h1>
-          <p className="text-slate-500 font-semibold uppercase text-xs tracking-widest">Registre os indicadores semanais da Estaca</p>
+        <div className="mb-8 md:mb-10 text-center md:text-left">
+          {/* Texto responsivo: diminui um pouco no mobile para não quebrar linha feio */}
+          <h1 className="text-3xl md:text-4xl font-black tracking-tight mb-2" style={{ color: THEME.textTitle }}>
+            Lançamento de Dados
+          </h1>
+          <p className="text-slate-500 font-semibold uppercase text-[10px] md:text-xs tracking-widest">
+            Registre os indicadores semanais da Estaca
+          </p>
         </div>
 
-        <div className="grid grid-cols-1 gap-8">
+        <div className="grid grid-cols-1 gap-6 md:gap-8">
           
           {/* Card do Formulário */}
-          <div className="bg-white rounded-[2rem] shadow-xl border border-slate-200 overflow-hidden relative">
-            {/* Faixa decorativa no topo */}
+          <div className="bg-white rounded-[1.5rem] md:rounded-[2rem] shadow-xl border border-slate-200 overflow-hidden relative">
             <div className="h-2 w-full absolute top-0 left-0" style={{ backgroundColor: THEME.primary }}></div>
             
-            <div className="p-8 md:p-10">
-              <form onSubmit={handleSubmit} className="space-y-8">
+            {/* Padding responsivo: p-5 no mobile (ganha espaço), p-10 no desktop (elegância) */}
+            <div className="p-5 md:p-10">
+              <form onSubmit={handleSubmit} className="space-y-6 md:space-y-8">
                 
                 {/* Agrupamento: Seleção */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6">
+                  <div className="space-y-2 md:space-y-3">
                     <label className="text-xs font-black text-slate-500 uppercase tracking-wider flex items-center gap-2">
                       <Building2 size={16} className="text-slate-400" /> Ala / Ramo
                     </label>
@@ -165,7 +171,7 @@ export default function LancamentosPage() {
                         value={wardId} 
                         onChange={e => setWardId(e.target.value)} 
                         required 
-                        className="w-full appearance-none rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-4 text-slate-800 font-bold outline-none focus:border-[#0069a8] focus:bg-white transition-all"
+                        className="w-full appearance-none rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 md:py-4 text-slate-800 font-bold outline-none focus:border-[#0069a8] focus:bg-white transition-all text-sm md:text-base"
                       >
                         <option value="">Selecione...</option>
                         {wards.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
@@ -176,7 +182,7 @@ export default function LancamentosPage() {
                     </div>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="space-y-2 md:space-y-3">
                     <label className="text-xs font-black text-slate-500 uppercase tracking-wider flex items-center gap-2">
                       <Target size={16} className="text-slate-400" /> Indicador
                     </label>
@@ -185,7 +191,7 @@ export default function LancamentosPage() {
                         value={indicatorId} 
                         onChange={e => setIndicatorId(e.target.value)} 
                         required 
-                        className="w-full appearance-none rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-4 text-slate-800 font-bold outline-none focus:border-[#0069a8] focus:bg-white transition-all"
+                        className="w-full appearance-none rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 md:py-4 text-slate-800 font-bold outline-none focus:border-[#0069a8] focus:bg-white transition-all text-sm md:text-base"
                       >
                         <option value="">Selecione...</option>
                         {indicators.map(i => <option key={i.id} value={i.id}>{i.display_name}</option>)}
@@ -198,8 +204,8 @@ export default function LancamentosPage() {
                 </div>
 
                 {/* Agrupamento: Dados */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-                  <div className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6 pt-2">
+                  <div className="space-y-2 md:space-y-3">
                     <label className="text-xs font-black text-slate-500 uppercase tracking-wider flex items-center gap-2">
                       <Calendar size={16} className="text-slate-400" /> Dia da Semana
                     </label>
@@ -208,10 +214,10 @@ export default function LancamentosPage() {
                       value={weekStart} 
                       onChange={e => setWeekStart(e.target.value)} 
                       required 
-                      className="w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 text-slate-800 font-bold outline-none focus:border-[#0069a8] focus:bg-white transition-all" 
+                      className="w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 text-slate-800 font-bold outline-none focus:border-[#0069a8] focus:bg-white transition-all text-sm md:text-base" 
                     />
                   </div>
-                  <div className="space-y-3">
+                  <div className="space-y-2 md:space-y-3">
                     <label className="text-xs font-black text-slate-500 uppercase tracking-wider flex items-center gap-2">
                       <Hash size={16} className="text-slate-400" /> Valor Realizado
                     </label>
@@ -220,7 +226,7 @@ export default function LancamentosPage() {
                       value={value} 
                       onChange={e => setValue(e.target.value)} 
                       required 
-                      className="w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 text-2xl font-black text-[#0069a8] outline-none focus:border-[#0069a8] focus:bg-white transition-all placeholder:text-slate-300" 
+                      className="w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 text-xl md:text-2xl font-black text-[#0069a8] outline-none focus:border-[#0069a8] focus:bg-white transition-all placeholder:text-slate-300" 
                       placeholder="0" 
                     />
                   </div>
@@ -228,35 +234,36 @@ export default function LancamentosPage() {
 
                 {/* Mensagens */}
                 {message && (
-                  <div className={`p-4 rounded-xl flex items-center gap-3 animate-in fade-in slide-in-from-top-2 duration-300 ${message.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-100' : 'bg-rose-50 text-rose-800 border border-rose-100'}`}>
-                    {message.type === 'success' ? <CheckCircle2 size={24} /> : <AlertCircle size={24} className="shrink-0" />}
-                    <span className="font-bold text-sm">{message.text}</span>
+                  <div className={`p-4 rounded-xl flex items-start md:items-center gap-3 animate-in fade-in slide-in-from-top-2 duration-300 ${message.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-100' : 'bg-rose-50 text-rose-800 border border-rose-100'}`}>
+                    <div className="shrink-0 mt-0.5 md:mt-0">
+                        {message.type === 'success' ? <CheckCircle2 size={24} /> : <AlertCircle size={24} />}
+                    </div>
+                    <span className="font-bold text-sm leading-tight">{message.text}</span>
                   </div>
                 )}
 
-                {/* Botão de Ação */}
                 <button 
                   disabled={submitting} 
                   type="submit" 
-                  className="w-full flex items-center justify-center gap-2 text-white font-bold py-5 rounded-xl hover:shadow-xl hover:scale-[1.01] active:scale-[0.98] disabled:opacity-70 disabled:hover:scale-100 transition-all text-lg shadow-lg shadow-blue-900/10"
+                  className="w-full flex items-center justify-center gap-2 text-white font-bold py-4 md:py-5 rounded-xl hover:shadow-xl hover:scale-[1.01] active:scale-[0.98] disabled:opacity-70 disabled:hover:scale-100 transition-all text-base md:text-lg shadow-lg shadow-blue-900/10"
                   style={{ backgroundColor: THEME.primary }}
                 >
-                  {submitting ? <Loader2 className="h-6 w-6 animate-spin" /> : <><Save size={22}/> Salvar Lançamento</>}
+                  {submitting ? <Loader2 className="h-6 w-6 animate-spin" /> : <><Save size={20} className="md:w-[22px] md:h-[22px]"/> Salvar Lançamento</>}
                 </button>
               </form>
             </div>
           </div>
 
           {/* LISTA DE ÚLTIMOS LANÇAMENTOS */}
-          <div className="bg-white rounded-[2rem] shadow-lg border border-slate-200 overflow-hidden">
-            <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+          <div className="bg-white rounded-[1.5rem] md:rounded-[2rem] shadow-lg border border-slate-200 overflow-hidden">
+            <div className="p-6 md:p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 bg-slate-100 rounded-xl">
                     <History size={20} className="text-slate-500" />
                 </div>
                 <div>
-                    <h2 className="font-black text-slate-800 text-lg">Histórico Recente</h2>
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-tighter">Últimos 5 registros</p>
+                    <h2 className="font-black text-slate-800 text-base md:text-lg">Histórico Recente</h2>
+                    <p className="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-tighter">Últimos 5 registros</p>
                 </div>
               </div>
             </div>
@@ -265,29 +272,38 @@ export default function LancamentosPage() {
               {recentEntries.length === 0 ? (
                 <div className="p-10 text-center flex flex-col items-center gap-2">
                     <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mb-2">
-                        <History size={24} className="text-slate-300" />
+                      <History size={24} className="text-slate-300" />
                     </div>
                     <p className="text-slate-400 font-medium">Nenhum lançamento recente.</p>
                 </div>
               ) : (
                 recentEntries.map((entry) => (
-                  <div key={entry.id} className="p-6 hover:bg-slate-50 transition-colors flex justify-between items-center group">
-                    <div className="flex items-center gap-4">
-                      <div className="hidden sm:flex h-10 w-10 items-center justify-center rounded-xl bg-sky-50 text-[#0069a8] font-bold">
-                         <Hash size={18} />
+                  /* Padding reduzido no mobile (p-4) e normal no PC (p-6) */
+                  <div key={entry.id} className="p-4 md:p-6 hover:bg-slate-50 transition-colors flex justify-between items-center group gap-3">
+                    
+                    {/* Lado Esquerdo: Ícone + Textos */}
+                    <div className="flex items-center gap-3 md:gap-4 min-w-0 flex-1">
+                      <div className="hidden sm:flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-[#0069a8] font-bold">
+                          <Hash size={18} />
                       </div>
-                      <div className="flex flex-col">
-                        <span className="font-bold text-slate-700 group-hover:text-[#0069a8] transition-colors">{entry.indicators?.display_name}</span>
-                        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1 mt-0.5">
-                          <Building2 size={12} /> {entry.wards?.name}
+                      <div className="flex flex-col min-w-0">
+                        {/* truncate garante que nomes longos não quebrem o layout no mobile */}
+                        <span className="font-bold text-slate-700 group-hover:text-[#0069a8] transition-colors truncate text-sm md:text-base">
+                            {entry.indicators?.display_name}
+                        </span>
+                        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1 mt-0.5 truncate">
+                          <Building2 size={12} className="shrink-0" /> {entry.wards?.name}
                         </span>
                       </div>
                     </div>
                     
-                    <div className="text-right">
-                      <div className="text-2xl font-black text-slate-800 tracking-tight">{entry.value}</div>
+                    {/* Lado Direito: Valores */}
+                    <div className="text-right shrink-0">
+                      <div className="text-xl md:text-2xl font-black text-slate-800 tracking-tight">{entry.value}</div>
                       <div className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1 justify-end bg-slate-100 px-2 py-0.5 rounded-full mt-1">
-                        <Clock size={10} /> {new Date(entry.week_start).toLocaleDateString('pt-BR')}
+                        <Clock size={10} /> 
+                        <span className="hidden xs:inline">{new Date(entry.week_start).toLocaleDateString('pt-BR')}</span>
+                        <span className="xs:hidden">{new Date(entry.week_start).toLocaleDateString('pt-BR').slice(0,5)}</span>
                       </div>
                     </div>
                   </div>
