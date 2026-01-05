@@ -20,11 +20,14 @@ type Ward = {
   name: string
 }
 
+// ⚠️ ATUALIZADO: Tipo expandido para suportar dados ricos da v1.1
 type DashboardData = {
   id: string
   slug: string
   display_name: string
-  value: number
+  value: number | string // Suporta formatação
+  secondary?: string     // Nova linha de apoio (metas, médias)
+  trend?: 'up' | 'down' | 'neutral'
 }
 
 const COLORS = {
@@ -60,7 +63,7 @@ export default function DashboardPage() {
   const [targetMatrix, setTargetMatrix] = useState<Record<string, Record<string, number>>>({})
   const [stakeTotals, setStakeTotals] = useState<Record<string, number>>({})
 
-  // --- Lógica Mantida ---
+  // --- Helpers de Data ---
   const getCustomWeekNumber = (d: Date) => {
     const date = new Date(d.getTime());
     date.setHours(0, 0, 0, 0);
@@ -76,42 +79,175 @@ export default function DashboardPage() {
     return new Date(date.setDate(diff));
   }
 
+  // --- Lógica v1.1: Processamento Avançado de Indicadores ---
+  const processIndicatorLogic = (
+    ind: Indicator, 
+    allData: any[], 
+    target: number, 
+    currentDate: Date
+  ): DashboardData => {
+    const slug = ind.slug;
+    
+    // Filtrar dados para este indicador específico
+    const rawData = allData.filter(d => d.indicator_id === ind.id);
+    
+    // Datas de referência
+    const startOfCurrentYear = new Date(currentDate.getFullYear(), 0, 1);
+    const currentMonthStr = currentDate.toISOString().slice(0, 7); // YYYY-MM
+    const currentWeekStartIso = getStartOfWeek(currentDate).toISOString().split('T')[0];
+    
+    // Helpers de cálculo
+    const getValue = (entry: any) => Number(entry?.value) || 0;
+    
+    // Obter dado da semana atual (para indicadores snapshot/semanais)
+    const currentWeekEntry = rawData.find(d => d.week_start === currentWeekStartIso);
+    const currentWeekValue = getValue(currentWeekEntry);
+
+    // Estrutura base de retorno
+    let result: DashboardData = {
+      id: ind.id,
+      slug: ind.slug,
+      display_name: ind.display_name,
+      value: 0,
+      secondary: ''
+    };
+
+    switch (slug) {
+      // 1️⃣ Batismos (Acumulativo Anual)
+      case 'batismo_converso':
+        const totalYTD = rawData
+          .filter(d => d.week_start >= startOfCurrentYear.toISOString() && d.week_start <= currentWeekStartIso)
+          .reduce((acc, curr) => acc + getValue(curr), 0);
+        
+        const percentBatismo = target > 0 ? Math.round((totalYTD / target) * 100) : 0;
+        
+        result.value = totalYTD;
+        result.secondary = `Meta: ${target} (${percentBatismo}%)`;
+        break;
+
+      // 2️⃣ Frequência Sacramental (Semanal com Média)
+      case 'frequencia_sacramental':
+        // Média Anual (exclui zeros que representam conferências não reportadas ou reportadas como 0)
+        const validWeeks = rawData.filter(d => 
+          d.week_start >= startOfCurrentYear.toISOString() && 
+          d.week_start <= currentWeekStartIso && 
+          getValue(d) > 0
+        );
+        const avgYear = validWeeks.length > 0 
+          ? Math.round(validWeeks.reduce((acc, c) => acc + getValue(c), 0) / validWeeks.length) 
+          : 0;
+
+        result.value = currentWeekValue; // Valor da semana selecionada
+        result.secondary = `Média Ano: ${avgYear}`;
+        break;
+
+      // 3️⃣ Membros Jejuando (Acumulado do Mês)
+      case 'membros_jejuando':
+        const monthTotal = rawData
+          .filter(d => d.week_start.startsWith(currentMonthStr))
+          .reduce((acc, curr) => acc + getValue(curr), 0);
+        
+        // Meta anual convertida para meta mensal aproximada (meramente visual) ou meta anual total
+        const percentJejum = target > 0 ? Math.round((monthTotal / (target / 12)) * 100) : 0;
+        
+        result.value = monthTotal;
+        result.secondary = target > 0 ? `Meta Anual: ${target}` : 'Mensal';
+        break;
+
+      // 4️⃣, 5️⃣, 7️⃣, 8️⃣ Indicadores de "Estoque" (Snapshot Atual - Não zera)
+      case 'membros_participantes':
+      case 'membros_retornando_a_igreja':
+      case 'recomendacao_templo_com_investidura':
+      case 'recomendacao_templo_sem_investidura':
+        // Pega o registro mais recente até a data selecionada (Estado Atual)
+        const latestEntry = rawData
+          .filter(d => d.week_start <= currentWeekStartIso)
+          .sort((a, b) => new Date(b.week_start).getTime() - new Date(a.week_start).getTime())[0];
+        
+        const stockValue = getValue(latestEntry);
+        result.value = stockValue;
+        
+        if (slug === 'membros_participantes' && target > 0) {
+           const diff = stockValue - target;
+           result.secondary = `Meta: ${target} (${diff > 0 ? '+' : ''}${diff})`;
+        } else if (slug.includes('recomendacao')) {
+           // Calcular média simples do ano para comparação
+           const allYearValues = rawData.filter(d => d.week_start >= startOfCurrentYear.toISOString()).map(getValue);
+           const avg = allYearValues.length ? Math.round(allYearValues.reduce((a,b)=>a+b,0)/allYearValues.length) : 0;
+           result.secondary = `Média Ano: ${avg}`;
+        } else {
+           // Membros retornando
+           result.secondary = 'Total Ativo';
+        }
+        break;
+
+      // 6️⃣ Missionários (Constante)
+      case 'missionario_servindo_missao_do_brasil':
+        // Busca o último valor reportado
+        const lastMissionaryEntry = rawData
+        .filter(d => d.week_start <= currentWeekStartIso)
+        .sort((a, b) => new Date(b.week_start).getTime() - new Date(a.week_start).getTime())[0];
+        
+        const currentMissionaries = getValue(lastMissionaryEntry);
+        
+        // Pico histórico no ano
+        const peak = rawData
+          .filter(d => d.week_start >= startOfCurrentYear.toISOString())
+          .reduce((max, curr) => Math.max(max, getValue(curr)), 0);
+
+        result.value = currentMissionaries;
+        result.secondary = `Pico no Ano: ${peak}`;
+        break;
+
+      default:
+        result.value = currentWeekValue;
+    }
+
+    return result;
+  }
+
   const loadWeeklyData = useCallback(async (dateToLoad: Date) => {
     try {
       setLoading(true);
+      const yearStart = new Date(dateToLoad.getFullYear(), 0, 1);
       const sunday = getStartOfWeek(dateToLoad);
       const saturday = new Date(sunday);
       saturday.setDate(sunday.getDate() + 6);
 
-      const startIso = sunday.toISOString().split('T')[0];
-      const endIso = saturday.toISOString().split('T')[0];
+      // Datas ISO
+      const yearStartIso = yearStart.toISOString().split('T')[0];
+      const endIso = saturday.toISOString().split('T')[0]; // Pegamos dados até o fim da semana selecionada
+      
       setWeekLabel(`Semana ${getCustomWeekNumber(dateToLoad)} de ${dateToLoad.getFullYear()}`);
 
-      const { data: indicators } = await supabase.from('indicators').select('*').order('order_index');
-      
-      const { data: weekRawData } = await supabase
+      // ⚠️ v1.1: Fetch de TODO o período do ano até agora, não apenas a semana
+      // Isso permite calcular acumulados e médias no cliente sem mudar backend
+      const { data: yearRawData } = await supabase
         .from('weekly_indicator_data')
         .select('*')
-        .gte('week_start', startIso)
+        .gte('week_start', yearStartIso)
         .lte('week_start', endIso);
 
-      if (indicators) {
-        const summary = indicators.map((ind: Indicator) => ({
-          id: ind.id,
-          slug: ind.slug,
-          display_name: ind.display_name,
-          value: (weekRawData || [])
-            .filter((d: any) => d.indicator_id === ind.id)
-            .reduce((acc: number, curr: any) => acc + (Number(curr.value) || 0), 0)
-        }));
-        setMainCards(summary);
+      if (definitions.indicators) {
+        const processedCards = definitions.indicators.map((ind: Indicator) => {
+          // Busca a meta da estaca (soma das alas) para este indicador
+          const stakeTarget = stakeTotals[ind.id] || 0;
+          
+          return processIndicatorLogic(
+            ind, 
+            yearRawData || [], 
+            stakeTarget, 
+            dateToLoad
+          );
+        });
+        setMainCards(processedCards);
       }
     } catch (err) {
       console.error('Erro Bloco 1:', err);
     } finally {
       setLoading(false);
     }
-  }, [supabase]);
+  }, [supabase, definitions, stakeTotals]);
 
   const loadDefinitions = useCallback(async () => {
     try {
@@ -163,6 +299,7 @@ export default function DashboardPage() {
     }
   }, [supabase, definitions]); 
 
+  // --- Efeitos ---
   useEffect(() => {
     async function init() {
       await loadDefinitions();
@@ -174,37 +311,44 @@ export default function DashboardPage() {
 
       const initialDate = lastEntry ? new Date(lastEntry.week_start + 'T12:00:00') : new Date();
       setReferenceDate(initialDate);
-      loadWeeklyData(initialDate);
     }
     init();
-  }, [supabase, loadDefinitions, loadWeeklyData]);
+  }, [supabase, loadDefinitions]);
 
+  // Carrega metas quando ano muda
   useEffect(() => {
     if (definitions.wards.length > 0) {
       loadTargetsForYear(selectedYear);
     }
   }, [selectedYear, definitions, loadTargetsForYear]);
 
+  // Carrega dados semanais quando Data ou Metas (para cálculo de %) estão prontos
+  useEffect(() => {
+    if (referenceDate && definitions.indicators.length > 0) {
+        loadWeeklyData(referenceDate);
+    }
+  }, [referenceDate, definitions, stakeTotals, loadWeeklyData]);
+
+
   const changeWeek = (offset: number) => {
     if (!referenceDate) return;
     const newDate = new Date(referenceDate);
     newDate.setDate(newDate.getDate() + (offset * 7));
     setReferenceDate(newDate);
-    loadWeeklyData(newDate);
+    // loadWeeklyData é chamado pelo useEffect dependente de referenceDate
   }
 
   return (
-    // Removido padding excessivo do container principal para aproveitar a tela
     <main className="w-full min-h-screen font-sans">
       <div className="w-full mx-auto space-y-6">
         
-        {/* HEADER: Ajustado para centralizar e ocupar menos espaço */}
+        {/* HEADER */}
         <header className="pt-2 pb-4 text-center md:text-left">
           <h1 className="text-2xl md:text-4xl font-black tracking-tight leading-tight" style={{ color: COLORS.title }}>
             Dashboard
           </h1>
           <p className="text-slate-500 font-bold uppercase text-[10px] md:text-xs tracking-widest mt-1">
-            Gestão de Indicadores
+            Gestão de Indicadores v1.1
           </p>
         </header>
 
@@ -212,7 +356,6 @@ export default function DashboardPage() {
         <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden p-4 md:p-8 transition-all">
           
           <div className="flex flex-col md:flex-row items-center justify-between mb-4 md:mb-6 gap-4 border-b border-slate-100 pb-4">
-            {/* Seletor de Data Full Width Mobile */}
             <div className="flex items-center justify-between w-full md:w-auto bg-slate-50 p-1 rounded-xl border border-slate-200">
               <button onClick={() => changeWeek(-1)} className="p-2 md:p-3 hover:bg-white rounded-lg text-slate-500 shadow-sm transition-all active:scale-95">
                 <ChevronLeft className="w-4 h-4 md:w-5 md:h-5" />
@@ -229,13 +372,12 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* GRID INTELIGENTE: Layout ajustado para evitar quebra de texto */}
+          {/* GRID INTELIGENTE */}
           <div className={`grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-6 ${loading ? 'opacity-50' : ''}`}>
             {mainCards.map((card) => (
-              <div key={card.id} className="group bg-white p-3 md:p-6 rounded-xl md:rounded-2xl border border-slate-100 shadow-sm hover:border-sky-200 hover:shadow-md transition-all duration-300 flex flex-col justify-between h-full min-h-[100px]">
+              <div key={card.id} className="group bg-white p-3 md:p-6 rounded-xl md:rounded-2xl border border-slate-100 shadow-sm hover:border-sky-200 hover:shadow-md transition-all duration-300 flex flex-col justify-between h-full min-h-[120px]">
                 
                 <div className="flex justify-between items-start mb-2">
-                  {/* Fonte reduzida para mobile e quebra de linha permitida */}
                   <span className="text-[9px] md:text-xs font-black text-slate-500 uppercase tracking-wide leading-3 pr-1 line-clamp-3">
                     {card.display_name}
                   </span>
@@ -244,10 +386,23 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                {/* Valor ajustado */}
-                <p className="text-2xl md:text-5xl font-black text-slate-800 tracking-tight group-hover:text-sky-700 transition-colors mt-auto">
-                  {card.value}
-                </p>
+                {/* Conteúdo Valor + Secundário */}
+                <div className="mt-auto">
+                    <p className="text-2xl md:text-5xl font-black text-slate-800 tracking-tight group-hover:text-sky-700 transition-colors">
+                      {card.value}
+                    </p>
+                    
+                    {/* ⚠️ ADIÇÃO v1.1: Campo secundário para contexto (Meta, Média, etc) */}
+                    {card.secondary && (
+                        <div className="flex items-center gap-1 mt-1">
+                            {/* Pequeno indicador visual ou apenas texto */}
+                            <span className="text-[10px] md:text-xs font-bold text-slate-400 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">
+                                {card.secondary}
+                            </span>
+                        </div>
+                    )}
+                </div>
+
               </div>
             ))}
           </div>
@@ -297,7 +452,6 @@ export default function DashboardPage() {
                     <th key={ind.id} className="p-3 text-[9px] md:text-xs font-black text-slate-500 uppercase tracking-widest border-b border-slate-200 text-center align-bottom min-w-[80px] md:min-w-[120px]">
                       <div className="flex flex-col items-center gap-1">
                         {ICON_MAP[ind.slug]}
-                        {/* Oculta nome longo no mobile se necessário, ou usa quebra */}
                         <span className="whitespace-normal max-w-[80px] leading-tight hidden md:block">{ind.display_name}</span>
                         <span className="md:hidden truncate max-w-[60px]">{ind.slug.split('_')[0]}...</span>
                       </div>
