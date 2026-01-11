@@ -338,17 +338,12 @@ export default function DashboardPage() {
   useEffect(() => {
     async function init() {
       await loadDefinitions();
-      const { data: lastEntry } = await supabase
-        .from('weekly_indicator_data')
-        .select('week_start')
-        .order('week_start', { ascending: false })
-        .limit(1).single();
-
-      const initialDate = lastEntry ? new Date(lastEntry.week_start + 'T12:00:00') : new Date();
-      setReferenceDate(initialDate);
+      // AJUSTE SOLICITADO: Define a data de referência como HOJE
+      // Isso força o sistema a calcular a semana atual baseada na data real do usuário
+      setReferenceDate(new Date()); 
     }
     init();
-  }, [supabase, loadDefinitions]);
+  }, [loadDefinitions]); // supabase removido pois não é usado na inicialização simplificada
 
   useEffect(() => {
     if (referenceDate) {
@@ -558,7 +553,7 @@ export default function DashboardPage() {
              Este sistema não é um produto oficial da Igreja de Jesus Cristo dos Santos dos Últimos Dias.
            </p>
            <p className="text-[9px] text-slate-400 font-mono">
-             Versão 1.1.4
+             Versão 1.1.5
            </p>
         </footer>
       </div>
