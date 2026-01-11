@@ -4,7 +4,8 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '../../lib/supabase/client'
 import { 
   TrendingUp, Calendar, Users, UserPlus, Heart, Church, 
-  Award, BookOpen, ChevronLeft, ChevronRight, Target
+  Award, BookOpen, ChevronLeft, ChevronRight, Target,
+  ArrowUpRight, ArrowDownRight, Minus
 } from 'lucide-react'
 
 // --- Tipos ---
@@ -20,11 +21,20 @@ type Ward = {
   name: string
 }
 
+// Atualizado para suportar estrutura de dados complexa nos cards
 type DashboardData = {
   id: string
   slug: string
   display_name: string
-  value: number
+  value: number | string
+  details?: {
+    target?: number
+    percent?: number
+    subtitle?: string
+    trend?: 'up' | 'down' | 'neutral'
+    comparisonLabel?: string
+    subValue?: string | number
+  }
 }
 
 const COLORS = {
@@ -60,7 +70,7 @@ export default function DashboardPage() {
   const [targetMatrix, setTargetMatrix] = useState<Record<string, Record<string, number>>>({})
   const [stakeTotals, setStakeTotals] = useState<Record<string, number>>({})
 
-  // --- Lógica Mantida ---
+  // --- Helpers de Data ---
   const getCustomWeekNumber = (d: Date) => {
     const date = new Date(d.getTime());
     date.setHours(0, 0, 0, 0);
@@ -76,42 +86,193 @@ export default function DashboardPage() {
     return new Date(date.setDate(diff));
   }
 
+  // Lógica principal de processamento versão 1.1
+  const processIndicatorLogic = (
+    ind: Indicator, 
+    allData: any[], 
+    refDate: Date, 
+    stakeTarget: number
+  ): DashboardData => {
+    const refTime = refDate.getTime();
+    const currentYear = refDate.getFullYear();
+    const currentMonth = refDate.getMonth();
+    
+    // Filtra dados apenas do indicador atual
+    const indData = allData.filter(d => d.indicator_id === ind.id);
+
+    let mainValue = 0;
+    let details: DashboardData['details'] = {};
+
+    // Helper: Obter dados da semana selecionada
+    const startOfWeekISO = getStartOfWeek(refDate).toISOString().split('T')[0];
+    const endOfWeekISO = new Date(getStartOfWeek(refDate).getTime() + 6 * 86400000).toISOString().split('T')[0];
+
+    // Helper: Obter último valor válido por unidade (Lógica de Snapshot)
+    const getSnapshotSum = (maxDateISO: string) => {
+      const latestByWard: Record<string, number> = {};
+      indData.forEach(d => {
+        if (d.week_start <= maxDateISO) {
+          // Se já existe e a data deste registro é mais recente, substitui
+          const existingDate = latestByWard[`date_${d.ward_id}`];
+          if (!existingDate || d.week_start > existingDate) {
+            latestByWard[`date_${d.ward_id}`] = d.week_start;
+            latestByWard[d.ward_id] = Number(d.value) || 0;
+          }
+        }
+      });
+      return Object.values(latestByWard).reduce((a, b) => typeof b === 'number' ? a + b : a, 0);
+    }
+
+    switch (ind.slug) {
+      // 1️⃣ Batismos de Conversos (Acumulativo Anual)
+      case 'batismo_converso':
+        // Soma tudo do ano até a data de referência
+        mainValue = indData
+          .filter(d => d.week_start <= endOfWeekISO && d.week_start.startsWith(String(currentYear)))
+          .reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
+        
+        details = {
+          target: stakeTarget,
+          percent: stakeTarget > 0 ? Math.round((mainValue / stakeTarget) * 100) : 0,
+          subtitle: 'Acumulado no Ano'
+        };
+        break;
+
+      // 2️⃣ Frequência da Reunião Sacramental (Semanal + Médias)
+      case 'frequencia_sacramental':
+        // Soma exata da semana selecionada
+        mainValue = indData
+          .filter(d => d.week_start >= startOfWeekISO && d.week_start <= endOfWeekISO)
+          .reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
+        
+        // Média do mês (exclui semanas zeradas se todas forem 0, mas aqui simplificado para soma/contagem de semanas com dados)
+        // Lógica simplificada robusta: pegar semanas únicas do mês atual que tiveram dados > 0
+        const monthData = indData.filter(d => {
+            const dDate = new Date(d.week_start);
+            return dDate.getMonth() === currentMonth && dDate.getFullYear() === currentYear && d.week_start <= endOfWeekISO;
+        });
+        
+        // Agrupar por semana para somar total da estaca naquela semana
+        const weeklySums: Record<string, number> = {};
+        monthData.forEach(d => {
+            weeklySums[d.week_start] = (weeklySums[d.week_start] || 0) + Number(d.value);
+        });
+        
+        const validWeeks = Object.values(weeklySums).filter(v => v > 0);
+        const avgMonth = validWeeks.length > 0 
+            ? Math.round(validWeeks.reduce((a, b) => a + b, 0) / validWeeks.length) 
+            : 0;
+
+        details = {
+          subValue: avgMonth,
+          comparisonLabel: 'Média do Mês',
+          subtitle: 'Total da Semana'
+        };
+        break;
+
+      // 3️⃣ Membros Jejuando (Mensal)
+      case 'membros_jejuando':
+        // Soma de todas as ofertas do mês atual até a data
+        mainValue = indData
+          .filter(d => {
+             const dDate = new Date(d.week_start + 'T12:00:00'); // T12 evita timezone issues
+             return dDate.getMonth() === currentMonth && dDate.getFullYear() === currentYear && d.week_start <= endOfWeekISO;
+          })
+          .reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
+        
+        details = {
+          target: stakeTarget > 0 ? Math.round(stakeTarget / 12) : 0, // Meta mensal aproximada
+          percent: stakeTarget > 0 ? Math.round((mainValue / (stakeTarget/12)) * 100) : 0,
+          subtitle: 'Total do Mês'
+        };
+        break;
+
+      // 4️⃣ Membros Participantes (Snapshot)
+      case 'membros_participantes':
+      // 5️⃣ Membros Retornando (Snapshot)
+      case 'membros_retornando_a_igreja':
+      // 6️⃣ Missionários (Snapshot)
+      case 'missionario_servindo_missao_do_brasil':
+      // 7️⃣ Rec. Templo Com (Snapshot)
+      case 'recomendacao_templo_com_investidura':
+      // 8️⃣ Rec. Templo Sem (Snapshot)
+      case 'recomendacao_templo_sem_investidura':
+        
+        // Valor atual (soma das últimas entradas de cada unidade)
+        mainValue = getSnapshotSum(endOfWeekISO);
+
+        // Para calcular tendência, pega o snapshot de 4 semanas atrás
+        const prevDate = new Date(refDate);
+        prevDate.setDate(prevDate.getDate() - 28);
+        const prevValue = getSnapshotSum(prevDate.toISOString().split('T')[0]);
+
+        details = {
+          target: stakeTarget,
+          subtitle: 'Posição Atual',
+          trend: mainValue > prevValue ? 'up' : (mainValue < prevValue ? 'down' : 'neutral'),
+          subValue: stakeTarget > 0 ? (mainValue - stakeTarget) : undefined, // Diferença
+          comparisonLabel: stakeTarget > 0 ? 'Diferença da Meta' : 'vs Mês Anterior'
+        };
+        
+        // Ajuste específico para missionários (sem meta de diferença, mostra histórico)
+        if (ind.slug === 'missionario_servindo_missao_do_brasil') {
+            details.subValue = prevValue;
+            details.comparisonLabel = 'Mês Anterior';
+            details.target = undefined; // Remove meta visual se não fizer sentido
+        }
+        break;
+
+      default:
+        mainValue = 0;
+    }
+
+    return {
+      id: ind.id,
+      slug: ind.slug,
+      display_name: ind.display_name,
+      value: mainValue,
+      details: details
+    };
+  }
+
   const loadWeeklyData = useCallback(async (dateToLoad: Date) => {
     try {
       setLoading(true);
+      
+      // Define intervalo expandido (Início do Ano até Fim da Semana Selecionada)
+      // Isso permite calcular acumulados (batismos) e médias mensais/anuais
+      const startOfYear = new Date(dateToLoad.getFullYear(), 0, 1).toISOString().split('T')[0];
+      
       const sunday = getStartOfWeek(dateToLoad);
       const saturday = new Date(sunday);
       saturday.setDate(sunday.getDate() + 6);
+      const endOfWeekIso = saturday.toISOString().split('T')[0];
 
-      const startIso = sunday.toISOString().split('T')[0];
-      const endIso = saturday.toISOString().split('T')[0];
       setWeekLabel(`Semana ${getCustomWeekNumber(dateToLoad)} de ${dateToLoad.getFullYear()}`);
 
       const { data: indicators } = await supabase.from('indicators').select('*').order('order_index');
       
-      const { data: weekRawData } = await supabase
+      // Busca dados expandidos
+      const { data: rawData } = await supabase
         .from('weekly_indicator_data')
         .select('*')
-        .gte('week_start', startIso)
-        .lte('week_start', endIso);
+        .gte('week_start', startOfYear)
+        .lte('week_start', endOfWeekIso);
 
       if (indicators) {
-        const summary = indicators.map((ind: Indicator) => ({
-          id: ind.id,
-          slug: ind.slug,
-          display_name: ind.display_name,
-          value: (weekRawData || [])
-            .filter((d: any) => d.indicator_id === ind.id)
-            .reduce((acc: number, curr: any) => acc + (Number(curr.value) || 0), 0)
-        }));
-        setMainCards(summary);
+        // Processa cada card usando a lógica inteligente V1.1
+        const processedCards = indicators.map((ind: Indicator) => {
+          const target = stakeTotals[ind.id] || 0;
+          return processIndicatorLogic(ind, rawData || [], dateToLoad, target);
+        });
+        setMainCards(processedCards);
       }
     } catch (err) {
       console.error('Erro Bloco 1:', err);
     } finally {
       setLoading(false);
     }
-  }, [supabase]);
+  }, [supabase, stakeTotals]); // Adicionado stakeTotals como dependência
 
   const loadDefinitions = useCallback(async () => {
     try {
@@ -174,10 +335,17 @@ export default function DashboardPage() {
 
       const initialDate = lastEntry ? new Date(lastEntry.week_start + 'T12:00:00') : new Date();
       setReferenceDate(initialDate);
-      loadWeeklyData(initialDate);
+      // loadWeeklyData será chamado pelo useEffect abaixo quando stakeTotals estiver pronto ou data mudar
     }
     init();
-  }, [supabase, loadDefinitions, loadWeeklyData]);
+  }, [supabase, loadDefinitions]);
+
+  // Efeito separado para carregar dados semanais quando as metas ou a data mudam
+  useEffect(() => {
+    if (referenceDate) {
+        loadWeeklyData(referenceDate);
+    }
+  }, [referenceDate, stakeTotals, loadWeeklyData]);
 
   useEffect(() => {
     if (definitions.wards.length > 0) {
@@ -190,8 +358,15 @@ export default function DashboardPage() {
     const newDate = new Date(referenceDate);
     newDate.setDate(newDate.getDate() + (offset * 7));
     setReferenceDate(newDate);
-    loadWeeklyData(newDate);
+    // loadWeeklyData é disparado pelo useEffect
   }
+
+  // Helper para renderizar indicador de tendência
+  const renderTrend = (trend?: 'up' | 'down' | 'neutral') => {
+    if (trend === 'up') return <ArrowUpRight className="w-3 h-3 text-emerald-500" />;
+    if (trend === 'down') return <ArrowDownRight className="w-3 h-3 text-rose-500" />;
+    return <Minus className="w-3 h-3 text-slate-400" />;
+  };
 
   return (
     // Removido padding excessivo do container principal para aproveitar a tela
@@ -232,22 +407,55 @@ export default function DashboardPage() {
           {/* GRID INTELIGENTE: Layout ajustado para evitar quebra de texto */}
           <div className={`grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-6 ${loading ? 'opacity-50' : ''}`}>
             {mainCards.map((card) => (
-              <div key={card.id} className="group bg-white p-3 md:p-6 rounded-xl md:rounded-2xl border border-slate-100 shadow-sm hover:border-sky-200 hover:shadow-md transition-all duration-300 flex flex-col justify-between h-full min-h-[100px]">
+              <div key={card.id} className="group bg-white p-3 md:p-6 rounded-xl md:rounded-2xl border border-slate-100 shadow-sm hover:border-sky-200 hover:shadow-md transition-all duration-300 flex flex-col justify-between h-full min-h-[140px]">
                 
                 <div className="flex justify-between items-start mb-2">
                   {/* Fonte reduzida para mobile e quebra de linha permitida */}
-                  <span className="text-[9px] md:text-xs font-black text-slate-500 uppercase tracking-wide leading-3 pr-1 line-clamp-3">
-                    {card.display_name}
-                  </span>
+                  <div className="flex flex-col">
+                    <span className="text-[9px] md:text-xs font-black text-slate-500 uppercase tracking-wide leading-3 pr-1 line-clamp-3">
+                        {card.display_name}
+                    </span>
+                    {/* Subtítulo dinâmico (ex: Acumulado no Ano) */}
+                    {card.details?.subtitle && (
+                        <span className="text-[8px] md:text-[10px] text-slate-400 font-medium mt-1">
+                            {card.details.subtitle}
+                        </span>
+                    )}
+                  </div>
                   <div className="p-1.5 md:p-3 bg-slate-50 group-hover:bg-sky-50 rounded-lg md:rounded-2xl transition-colors shrink-0">
                     {ICON_MAP[card.slug]}
                   </div>
                 </div>
 
-                {/* Valor ajustado */}
-                <p className="text-2xl md:text-5xl font-black text-slate-800 tracking-tight group-hover:text-sky-700 transition-colors mt-auto">
-                  {card.value}
-                </p>
+                {/* Valor ajustado com Metricas Secundárias */}
+                <div className="mt-auto">
+                    <p className="text-2xl md:text-5xl font-black text-slate-800 tracking-tight group-hover:text-sky-700 transition-colors">
+                    {card.value}
+                    </p>
+
+                    {/* Exibição Condicional de Detalhes Inteligentes */}
+                    <div className="flex flex-wrap items-center gap-2 mt-2 border-t border-slate-50 pt-2">
+                        {/* Meta e Porcentagem */}
+                        {card.details?.target !== undefined && card.details.target > 0 && (
+                            <div className="flex items-center gap-1 bg-slate-100 px-1.5 py-0.5 rounded text-[9px] md:text-[10px] font-bold text-slate-600">
+                                <Target className="w-3 h-3" />
+                                <span>{card.details.percent}% da Meta</span>
+                            </div>
+                        )}
+                        
+                        {/* Comparação ou Tendência */}
+                        {(card.details?.subValue !== undefined || card.details?.trend) && (
+                            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] md:text-[10px] font-bold text-slate-500">
+                                {card.details.trend && renderTrend(card.details.trend)}
+                                {card.details.subValue !== undefined && (
+                                    <span>
+                                        {card.details.subValue} <span className="text-[8px] font-normal opacity-70">{card.details.comparisonLabel}</span>
+                                    </span>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
               </div>
             ))}
           </div>
