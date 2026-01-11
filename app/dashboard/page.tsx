@@ -70,20 +70,33 @@ export default function DashboardPage() {
   const [targetMatrix, setTargetMatrix] = useState<Record<string, Record<string, number>>>({})
   const [stakeTotals, setStakeTotals] = useState<Record<string, number>>({})
 
-  // --- Helpers de Data ---
-  const getCustomWeekNumber = (d: Date) => {
-    const date = new Date(d.getTime());
-    date.setHours(0, 0, 0, 0);
-    const startOfYear = new Date(date.getFullYear(), 0, 1);
-    const pastDaysOfYear = (date.getTime() - startOfYear.getTime()) / 86400000;
-    return Math.ceil((pastDaysOfYear + startOfYear.getDay() + 1) / 7);
-  }
-
+  // --- Helpers de Data (CORRIGIDOS v1.1.4) ---
+  
+  // Garante o início da semana no Domingo (00:00:00)
   const getStartOfWeek = (d: Date) => {
     const date = new Date(d);
-    const day = date.getDay(); 
-    const diff = date.getDate() - day;
-    return new Date(date.setDate(diff));
+    const day = date.getDay(); // 0 = Domingo
+    const diff = date.getDate() - day; // Recua para o domingo
+    const sunday = new Date(date);
+    sunday.setDate(diff);
+    sunday.setHours(0, 0, 0, 0); // Zera hora para evitar problemas de cálculo
+    return sunday;
+  }
+
+  // Lógica corrigida: Calcula semana baseada no Domingo da semana.
+  // Se o domingo é em 2025, é semana de 2025. Se é em 2026, é semana de 2026.
+  // Semana 1 = A semana do primeiro domingo do ano.
+  const getCustomWeekNumber = (d: Date) => {
+    const sunday = getStartOfWeek(d);
+    const year = sunday.getFullYear();
+    const startOfYear = new Date(year, 0, 1);
+    
+    // Diferença em dias entre o Domingo atual e 1º de Jan
+    const diffTime = sunday.getTime() - startOfYear.getTime();
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    
+    // Cálculo simples: (Dias passados / 7) + 1
+    return Math.floor(diffDays / 7) + 1;
   }
 
   // Lógica principal de processamento versão 1.1
@@ -93,7 +106,6 @@ export default function DashboardPage() {
     refDate: Date, 
     stakeTarget: number
   ): DashboardData => {
-    const refTime = refDate.getTime();
     const currentYear = refDate.getFullYear();
     const currentMonth = refDate.getMonth();
     
@@ -145,14 +157,12 @@ export default function DashboardPage() {
           .filter(d => d.week_start >= startOfWeekISO && d.week_start <= endOfWeekISO)
           .reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
         
-        // Média do mês (exclui semanas zeradas se todas forem 0, mas aqui simplificado para soma/contagem de semanas com dados)
-        // Lógica simplificada robusta: pegar semanas únicas do mês atual que tiveram dados > 0
+        // Média do mês
         const monthData = indData.filter(d => {
             const dDate = new Date(d.week_start);
             return dDate.getMonth() === currentMonth && dDate.getFullYear() === currentYear && d.week_start <= endOfWeekISO;
         });
         
-        // Agrupar por semana para somar total da estaca naquela semana
         const weeklySums: Record<string, number> = {};
         monthData.forEach(d => {
             weeklySums[d.week_start] = (weeklySums[d.week_start] || 0) + Number(d.value);
@@ -214,11 +224,11 @@ export default function DashboardPage() {
           comparisonLabel: stakeTarget > 0 ? 'Diferença da Meta' : 'vs Mês Anterior'
         };
         
-        // Ajuste específico para missionários (sem meta de diferença, mostra histórico)
+        // Ajuste específico para missionários
         if (ind.slug === 'missionario_servindo_missao_do_brasil') {
             details.subValue = prevValue;
             details.comparisonLabel = 'Mês Anterior';
-            details.target = undefined; // Remove meta visual se não fizer sentido
+            details.target = undefined; 
         }
         break;
 
@@ -239,8 +249,6 @@ export default function DashboardPage() {
     try {
       setLoading(true);
       
-      // Define intervalo expandido (Início do Ano até Fim da Semana Selecionada)
-      // Isso permite calcular acumulados (batismos) e médias mensais/anuais
       const startOfYear = new Date(dateToLoad.getFullYear(), 0, 1).toISOString().split('T')[0];
       
       const sunday = getStartOfWeek(dateToLoad);
@@ -248,7 +256,10 @@ export default function DashboardPage() {
       saturday.setDate(sunday.getDate() + 6);
       const endOfWeekIso = saturday.toISOString().split('T')[0];
 
-      setWeekLabel(`Semana ${getCustomWeekNumber(dateToLoad)} de ${dateToLoad.getFullYear()}`);
+      // Exibição corrigida do número da semana
+      const currentWeekNum = getCustomWeekNumber(dateToLoad);
+      const currentYearLabel = sunday.getFullYear(); // Usa o ano do Domingo para consistência
+      setWeekLabel(`Semana ${currentWeekNum} de ${currentYearLabel}`);
 
       const { data: indicators } = await supabase.from('indicators').select('*').order('order_index');
       
@@ -272,7 +283,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [supabase, stakeTotals]); // Adicionado stakeTotals como dependência
+  }, [supabase, stakeTotals]); 
 
   const loadDefinitions = useCallback(async () => {
     try {
@@ -335,12 +346,10 @@ export default function DashboardPage() {
 
       const initialDate = lastEntry ? new Date(lastEntry.week_start + 'T12:00:00') : new Date();
       setReferenceDate(initialDate);
-      // loadWeeklyData será chamado pelo useEffect abaixo quando stakeTotals estiver pronto ou data mudar
     }
     init();
   }, [supabase, loadDefinitions]);
 
-  // Efeito separado para carregar dados semanais quando as metas ou a data mudam
   useEffect(() => {
     if (referenceDate) {
         loadWeeklyData(referenceDate);
@@ -358,10 +367,8 @@ export default function DashboardPage() {
     const newDate = new Date(referenceDate);
     newDate.setDate(newDate.getDate() + (offset * 7));
     setReferenceDate(newDate);
-    // loadWeeklyData é disparado pelo useEffect
   }
 
-  // Helper para renderizar indicador de tendência
   const renderTrend = (trend?: 'up' | 'down' | 'neutral') => {
     if (trend === 'up') return <ArrowUpRight className="w-3 h-3 text-emerald-500" />;
     if (trend === 'down') return <ArrowDownRight className="w-3 h-3 text-rose-500" />;
@@ -369,11 +376,10 @@ export default function DashboardPage() {
   };
 
   return (
-    // Removido padding excessivo do container principal para aproveitar a tela
     <main className="w-full min-h-screen font-sans">
       <div className="w-full mx-auto space-y-6">
         
-        {/* HEADER: Ajustado para centralizar e ocupar menos espaço */}
+        {/* HEADER */}
         <header className="pt-2 pb-4 text-center md:text-left">
           <h1 className="text-2xl md:text-4xl font-black tracking-tight leading-tight" style={{ color: COLORS.title }}>
             Dashboard
@@ -387,7 +393,7 @@ export default function DashboardPage() {
         <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden p-4 md:p-8 transition-all">
           
           <div className="flex flex-col md:flex-row items-center justify-between mb-4 md:mb-6 gap-4 border-b border-slate-100 pb-4">
-            {/* Seletor de Data Full Width Mobile */}
+            {/* Seletor de Data */}
             <div className="flex items-center justify-between w-full md:w-auto bg-slate-50 p-1 rounded-xl border border-slate-200">
               <button onClick={() => changeWeek(-1)} className="p-2 md:p-3 hover:bg-white rounded-lg text-slate-500 shadow-sm transition-all active:scale-95">
                 <ChevronLeft className="w-4 h-4 md:w-5 md:h-5" />
@@ -404,18 +410,16 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* GRID INTELIGENTE: Layout ajustado para evitar quebra de texto */}
+          {/* GRID INTELIGENTE */}
           <div className={`grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-6 ${loading ? 'opacity-50' : ''}`}>
             {mainCards.map((card) => (
               <div key={card.id} className="group bg-white p-3 md:p-6 rounded-xl md:rounded-2xl border border-slate-100 shadow-sm hover:border-sky-200 hover:shadow-md transition-all duration-300 flex flex-col justify-between h-full min-h-[140px]">
                 
                 <div className="flex justify-between items-start mb-2">
-                  {/* Fonte reduzida para mobile e quebra de linha permitida */}
                   <div className="flex flex-col">
                     <span className="text-[9px] md:text-xs font-black text-slate-500 uppercase tracking-wide leading-3 pr-1 line-clamp-3">
                         {card.display_name}
                     </span>
-                    {/* Subtítulo dinâmico (ex: Acumulado no Ano) */}
                     {card.details?.subtitle && (
                         <span className="text-[8px] md:text-[10px] text-slate-400 font-medium mt-1">
                             {card.details.subtitle}
@@ -427,15 +431,12 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                {/* Valor ajustado com Metricas Secundárias */}
                 <div className="mt-auto">
                     <p className="text-2xl md:text-5xl font-black text-slate-800 tracking-tight group-hover:text-sky-700 transition-colors">
                     {card.value}
                     </p>
 
-                    {/* Exibição Condicional de Detalhes Inteligentes */}
                     <div className="flex flex-wrap items-center gap-2 mt-2 border-t border-slate-50 pt-2">
-                        {/* Meta e Porcentagem */}
                         {card.details?.target !== undefined && card.details.target > 0 && (
                             <div className="flex items-center gap-1 bg-slate-100 px-1.5 py-0.5 rounded text-[9px] md:text-[10px] font-bold text-slate-600">
                                 <Target className="w-3 h-3" />
@@ -443,7 +444,6 @@ export default function DashboardPage() {
                             </div>
                         )}
                         
-                        {/* Comparação ou Tendência */}
                         {(card.details?.subValue !== undefined || card.details?.trend) && (
                             <div className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] md:text-[10px] font-bold text-slate-500">
                                 {card.details.trend && renderTrend(card.details.trend)}
@@ -502,25 +502,19 @@ export default function DashboardPage() {
                     Unidade
                   </th>
                   {definitions.indicators.map(ind => (
-                    // --- AJUSTE VISUAL INÍCIO ---
                     <th key={ind.id} className="p-2 md:p-3 text-center align-bottom border-b border-slate-200 min-w-[70px] md:min-w-[100px]">
                       <div className="flex flex-col items-center justify-end w-full gap-1.5">
                         <div className="shrink-0">
                              {ICON_MAP[ind.slug]}
                         </div>
-                        
-                        {/* Versão Desktop: Ajustada para permitir 2 linhas, whitespace-normal é crucial aqui */}
                         <span className="hidden md:block text-[10px] lg:text-[11px] leading-3 font-bold text-slate-600 uppercase tracking-tight w-full max-w-[120px] whitespace-normal break-words line-clamp-2">
                           {ind.display_name}
                         </span>
-
-                        {/* Versão Mobile: Curtíssima, truncate, sem quebrar layout */}
                         <span className="md:hidden truncate text-[9px] font-semibold text-slate-500 w-full max-w-[60px]">
                           {ind.display_name}
                         </span>
                       </div>
                     </th>
-                    // --- AJUSTE VISUAL FIM ---
                   ))}
                 </tr>
               </thead>
@@ -557,8 +551,15 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        <footer className="py-6 border-t border-slate-200 text-center opacity-40">
-           <Church className="w-4 h-4 text-slate-400 mx-auto" />
+        {/* RODAPÉ INFORMATIVO (ATUALIZADO v1.1.4) */}
+        <footer className="py-8 border-t border-slate-200 text-center opacity-50 space-y-2">
+           <Church className="w-4 h-4 text-slate-400 mx-auto mb-2" />
+           <p className="text-[10px] text-slate-500 font-medium">
+             Este sistema não é um produto oficial da Igreja de Jesus Cristo dos Santos dos Últimos Dias.
+           </p>
+           <p className="text-[9px] text-slate-400 font-mono">
+             Versão 1.1.4
+           </p>
         </footer>
       </div>
     </main>
