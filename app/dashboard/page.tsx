@@ -502,14 +502,25 @@ export default function DashboardPage() {
                     Unidade
                   </th>
                   {definitions.indicators.map(ind => (
-                    <th key={ind.id} className="p-3 text-[9px] md:text-xs font-black text-slate-500 uppercase tracking-widest border-b border-slate-200 text-center align-bottom min-w-[80px] md:min-w-[120px]">
-                      <div className="flex flex-col items-center gap-1">
-                        {ICON_MAP[ind.slug]}
-                        {/* Oculta nome longo no mobile se necessário, ou usa quebra */}
-                        <span className="whitespace-normal max-w-[80px] leading-tight hidden md:block">{ind.display_name}</span>
-                        <span className="md:hidden truncate max-w-[60px]">{ind.slug.split('_')[0]}...</span>
+                    // --- AJUSTE VISUAL INÍCIO ---
+                    <th key={ind.id} className="p-2 md:p-3 text-center align-bottom border-b border-slate-200 min-w-[70px] md:min-w-[100px]">
+                      <div className="flex flex-col items-center justify-end w-full gap-1.5">
+                        <div className="shrink-0">
+                             {ICON_MAP[ind.slug]}
+                        </div>
+                        
+                        {/* Versão Desktop: Proporcional, até 2 linhas, visual limpo */}
+                        <span className="hidden md:block line-clamp-2 text-[10px] leading-tight font-bold text-slate-600 uppercase tracking-tight w-full max-w-[100px]">
+                          {ind.display_name}
+                        </span>
+
+                        {/* Versão Mobile: Curtíssima, truncate, sem quebrar layout */}
+                        <span className="md:hidden truncate text-[9px] font-semibold text-slate-500 w-full max-w-[60px]">
+                          {ind.display_name}
+                        </span>
                       </div>
                     </th>
+                    // --- AJUSTE VISUAL FIM ---
                   ))}
                 </tr>
               </thead>
