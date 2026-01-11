@@ -509,8 +509,8 @@ export default function DashboardPage() {
                              {ICON_MAP[ind.slug]}
                         </div>
                         
-                        {/* Versão Desktop: Proporcional, até 2 linhas, visual limpo */}
-                        <span className="hidden md:block line-clamp-2 text-[10px] leading-tight font-bold text-slate-600 uppercase tracking-tight w-full max-w-[100px]">
+                        {/* Versão Desktop: Ajustada para permitir 2 linhas, whitespace-normal é crucial aqui */}
+                        <span className="hidden md:block text-[10px] lg:text-[11px] leading-3 font-bold text-slate-600 uppercase tracking-tight w-full max-w-[120px] whitespace-normal break-words line-clamp-2">
                           {ind.display_name}
                         </span>
 
