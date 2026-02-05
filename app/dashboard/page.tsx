@@ -5,7 +5,8 @@ import { createClient } from '../../lib/supabase/client'
 import { 
   TrendingUp, Calendar, Users, UserPlus, Heart, Church, 
   Award, BookOpen, ChevronLeft, ChevronRight, Target,
-  ArrowUpRight, ArrowDownRight, Minus, Trophy, AlertCircle
+  ArrowUpRight, ArrowDownRight, Minus, Trophy, AlertCircle,
+  Search, BarChart3
 } from 'lucide-react'
 
 // --- Tipos ---
@@ -19,12 +20,11 @@ type Indicator = {
 type Ward = {
   id: string
   name: string
-  membership_count: number | null // Campo novo
+  membership_count: number | null
 }
 
 type Period = '30d' | '90d' | '12m';
 
-// Tipagem atualizada para o Dashboard v1.3
 type DashboardData = {
   id: string
   slug: string
@@ -37,7 +37,6 @@ type DashboardData = {
     trend?: 'up' | 'down' | 'neutral'
     comparisonLabel?: string
     subValue?: string | number
-    // Campos de Ranking
     bestWard?: string
     bestValue?: number
     worstWard?: string
@@ -68,9 +67,13 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   
   const [mainCards, setMainCards] = useState<DashboardData[]>([])
+  // Novo estado para armazenar dados brutos e permitir recalculo do Bloco 3 sem fetch
+  const [cachedRawData, setCachedRawData] = useState<any[]>([]) 
   
-  // Estado novo: Seletor de Período
   const [selectedPeriod, setSelectedPeriod] = useState<Period>('30d')
+  
+  // Novo Estado: Unidade Selecionada para o Bloco 3
+  const [selectedWardId, setSelectedWardId] = useState<string>('')
 
   const [selectedYear, setSelectedYear] = useState(2026) 
   const [definitions, setDefinitions] = useState<{wards: Ward[], indicators: Indicator[]}>({ wards: [], indicators: [] })
@@ -78,46 +81,33 @@ export default function DashboardPage() {
   const [targetMatrix, setTargetMatrix] = useState<Record<string, Record<string, number>>>({})
   const [stakeTotals, setStakeTotals] = useState<Record<string, number>>({})
 
-  // --- Lógica de Datas v1.3 ---
+  // --- Lógica de Datas ---
   const getDateRange = (period: Period) => {
-    const end = new Date(); // Hoje
+    const end = new Date();
     const start = new Date();
     
     if (period === '30d') start.setDate(end.getDate() - 30);
     if (period === '90d') start.setDate(end.getDate() - 90);
     if (period === '12m') start.setMonth(end.getMonth() - 12);
     
-    // Ajusta horas para pegar o dia inteiro
     start.setHours(0,0,0,0);
     end.setHours(23,59,59,999);
     
     return { start, end };
   }
 
-  // --- Função Auxiliar: Ranking de Unidades ---
-  const calculateRanking = (
-    indId: string, 
-    allData: any[], 
-    wards: Ward[], 
-    periodStart: Date, 
-    periodEnd: Date,
-    type: 'sum' | 'avg' | 'snapshot'
-  ) => {
+  // --- Ranking (Bloco 1) ---
+  const calculateRanking = (indId: string, allData: any[], wards: Ward[], periodStart: Date, periodEnd: Date, type: 'sum' | 'avg' | 'snapshot') => {
     let bestWard = { name: '-', score: -1, value: 0 };
     let worstWard = { name: '-', score: 9999999, value: 0 };
 
     wards.forEach(ward => {
-      // 1. Filtra dados da unidade dentro do período
       const wardData = allData.filter(d => 
-        d.indicator_id === indId && 
-        d.ward_id === ward.id &&
-        new Date(d.week_start) >= periodStart &&
-        new Date(d.week_start) <= periodEnd
+        d.indicator_id === indId && d.ward_id === ward.id &&
+        new Date(d.week_start) >= periodStart && new Date(d.week_start) <= periodEnd
       );
 
       let value = 0;
-
-      // 2. Calcula valor absoluto da unidade
       if (wardData.length > 0) {
         if (type === 'sum') {
           value = wardData.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
@@ -125,45 +115,27 @@ export default function DashboardPage() {
            const sum = wardData.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
            value = Math.round(sum / wardData.length);
         } else if (type === 'snapshot') {
-          // Pega o registro mais recente (ordena por data decrescente)
           const sorted = wardData.sort((a, b) => new Date(b.week_start).getTime() - new Date(a.week_start).getTime());
           value = Number(sorted[0].value) || 0;
         }
       }
 
-      // 3. Calcula Score Proporcional (Valor / Membros * 1000)
-      // Se não tiver contagem de membros, usa 1 para evitar divisão por zero
       const members = ward.membership_count && ward.membership_count > 0 ? ward.membership_count : 1; 
       const score = (value / members) * 1000;
 
-      // 4. Define Campeão e Alerta
-      // Só considera para ranking se teve algum valor (para não penalizar quem não lançou dados ainda como "pior" se todos forem 0)
-      if (score > bestWard.score) {
-          bestWard = { name: ward.name, score, value };
-      }
-      // Para o pior, queremos alguém que tenha dados mas performance baixa, ou 0 mesmo.
-      if (score < worstWard.score) {
-          worstWard = { name: ward.name, score, value };
-      }
+      if (score > bestWard.score) bestWard = { name: ward.name, score, value };
+      if (score < worstWard.score) worstWard = { name: ward.name, score, value };
     });
 
-    // Limpeza caso não encontre dados
     if (bestWard.score === -1) bestWard = { name: '-', score: 0, value: 0 };
     if (worstWard.score === 9999999) worstWard = { name: '-', score: 0, value: 0 };
 
     return { best: bestWard, worst: worstWard };
   }
 
-  // --- Lógica Principal de Processamento v1.3 ---
-  const processPeriodLogic = (
-    ind: Indicator, 
-    allData: any[], 
-    wards: Ward[],
-    period: Period
-  ): DashboardData => {
+  // --- Processamento Bloco 1 ---
+  const processPeriodLogic = (ind: Indicator, allData: any[], wards: Ward[], period: Period): DashboardData => {
     const { start, end } = getDateRange(period);
-    
-    // Filtra dados globais do indicador dentro do período
     const periodData = allData.filter(d => {
       const dDate = new Date(d.week_start);
       return d.indicator_id === ind.id && dDate >= start && dDate <= end;
@@ -173,53 +145,34 @@ export default function DashboardPage() {
     let subtitle = '';
     let calcType: 'sum' | 'avg' | 'snapshot' = 'sum';
 
-    // Definição da lógica de agregação por indicador
     switch (ind.slug) {
       case 'frequencia_sacramental':
         calcType = 'avg';
         subtitle = `Média (${period})`;
-        // Média da Estaca: Primeiro soma todas as alas por semana, depois tira média das semanas
         const weeklySums: Record<string, number> = {};
-        periodData.forEach(d => {
-            weeklySums[d.week_start] = (weeklySums[d.week_start] || 0) + Number(d.value);
-        });
+        periodData.forEach(d => { weeklySums[d.week_start] = (weeklySums[d.week_start] || 0) + Number(d.value); });
         const weeks = Object.values(weeklySums);
         mainValue = weeks.length > 0 ? Math.round(weeks.reduce((a,b)=>a+b,0) / weeks.length) : 0;
         break;
-
       case 'batismo_converso':
+      case 'membros_jejuando':
         calcType = 'sum';
         subtitle = `Total (${period})`;
         mainValue = periodData.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
         break;
-
-      case 'membros_jejuando':
-         calcType = 'sum'; 
-         subtitle = `Total (${period})`;
-         mainValue = periodData.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
-         break;
-
       default:
-        // Indicadores de Estoque/Snapshot (Pega o último valor conhecido de cada ala e soma)
         calcType = 'snapshot';
         subtitle = 'Atual';
-        
-        // Mapa para guardar o último valor de cada ala
         const latestByWard: Record<string, {date: string, value: number}> = {};
-        
         periodData.forEach(d => {
            const current = latestByWard[d.ward_id];
-           // Se não tem registro ou o registro atual é mais novo, atualiza
            if (!current || d.week_start > current.date) {
               latestByWard[d.ward_id] = { date: d.week_start, value: Number(d.value) };
            }
         });
-        
-        // Soma os últimos valores de cada ala
         mainValue = Object.values(latestByWard).reduce((acc, item) => acc + item.value, 0);
     }
 
-    // Calcula Ranking
     const ranking = calculateRanking(ind.id, allData, wards, start, end, calcType);
 
     return {
@@ -228,7 +181,7 @@ export default function DashboardPage() {
       display_name: ind.display_name,
       value: mainValue,
       details: {
-        subtitle: subtitle,
+        subtitle,
         bestWard: ranking.best.name,
         bestValue: ranking.best.value,
         worstWard: ranking.worst.name,
@@ -237,35 +190,76 @@ export default function DashboardPage() {
     };
   }
 
-  // --- Carregamento de Dados ---
+  // --- Processamento Bloco 3 (Raio-X da Unidade) ---
+  const getWardMetrics = () => {
+    if (!selectedWardId || definitions.indicators.length === 0) return [];
+    
+    const { start, end } = getDateRange(selectedPeriod);
+
+    return definitions.indicators.map(ind => {
+      const wardData = cachedRawData.filter(d => 
+        d.indicator_id === ind.id && 
+        d.ward_id === selectedWardId &&
+        new Date(d.week_start) >= start &&
+        new Date(d.week_start) <= end
+      );
+
+      let value = 0;
+      // Reutiliza lógica de cálculo (Soma/Média/Snapshot)
+      if (ind.slug === 'frequencia_sacramental') {
+          const sum = wardData.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
+          value = wardData.length > 0 ? Math.round(sum / wardData.length) : 0;
+      } else if (['batismo_converso', 'membros_jejuando'].includes(ind.slug)) {
+          value = wardData.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
+      } else {
+          // Snapshot
+          const sorted = wardData.sort((a, b) => new Date(b.week_start).getTime() - new Date(a.week_start).getTime());
+          value = sorted.length > 0 ? Number(sorted[0].value) : 0;
+      }
+
+      // Meta Anual
+      const target = targetMatrix[selectedWardId]?.[ind.id] || 0;
+      // Diferença (Meta - Valor). Se for snapshot, é simples. Se for soma, é quanto falta pra meta anual.
+      // Se a meta é 0, não tem gap. Se Valor > Meta, gap é 0.
+      const gap = target > 0 ? Math.max(0, target - value) : 0;
+      const progress = target > 0 ? Math.min(100, Math.round((value / target) * 100)) : 0;
+
+      return {
+        ...ind,
+        value,
+        target,
+        gap,
+        progress
+      };
+    });
+  }
+
+  // --- Carregamento ---
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      
       const { start, end } = getDateRange(selectedPeriod);
-      // Converte para string ISO YYYY-MM-DD para o Supabase
       const startIso = start.toISOString().split('T')[0];
       const endIso = end.toISOString().split('T')[0];
 
-      // Busca Indicadores
       const { data: indicators } = await supabase.from('indicators').select('*').order('order_index');
       
-      // Busca Dados Semanais (Raw Data)
       const { data: rawData } = await supabase
         .from('weekly_indicator_data')
         .select('*')
         .gte('week_start', startIso)
         .lte('week_start', endIso);
+      
+      setCachedRawData(rawData || []); // Cache para uso no Bloco 3
 
       if (indicators && definitions.wards.length > 0) {
-        // Processa os cards com a nova lógica
         const processedCards = indicators.map((ind: Indicator) => {
           return processPeriodLogic(ind, rawData || [], definitions.wards, selectedPeriod);
         });
         setMainCards(processedCards);
       }
     } catch (err) {
-      console.error('Erro ao carregar dados v1.3:', err);
+      console.error('Erro:', err);
     } finally {
       setLoading(false);
     }
@@ -274,30 +268,27 @@ export default function DashboardPage() {
   const loadDefinitions = useCallback(async () => {
     try {
       const { data: indicators } = await supabase.from('indicators').select('*').order('order_index');
-      // Importante: Busca a coluna membership_count agora
       const { data: wards } = await supabase.from('wards').select('id, name, membership_count').order('name');
       
       if (indicators && wards) {
         setDefinitions({ wards, indicators });
+        if (wards.length > 0) setSelectedWardId(wards[0].id); // Seleciona primeira ala por padrão
       }
     } catch (err) {
-      console.error('Erro ao carregar definições:', err);
+      console.error('Erro:', err);
     }
   }, [supabase]);
 
-  // Mantido Bloco 2: Metas (Sem alterações na lógica de metas)
   const loadTargetsForYear = useCallback(async (year: number) => {
     try {
       const { data: targets, error } = await supabase
         .from('targets')
         .select('*')
         .eq('year', Number(year));
-
       if (error) { return; }
 
       const matrix: Record<string, Record<string, number>> = {};
       const totals: Record<string, number> = {};
-
       definitions.indicators.forEach(ind => { totals[ind.id] = 0; });
 
       if (targets && targets.length > 0) {
@@ -305,47 +296,32 @@ export default function DashboardPage() {
           const wId = String(t.ward_id);
           const iId = String(t.indicator_id);
           const val = Number(t.target_value) || 0;
-
           if (!matrix[wId]) matrix[wId] = {};
           matrix[wId][iId] = val;
-
-          if (totals[iId] !== undefined) {
-            totals[iId] += val;
-          }
+          if (totals[iId] !== undefined) totals[iId] += val;
         });
       }
-
       setTargetMatrix(matrix);
       setStakeTotals(totals);
-
-    } catch (err) {
-      console.error('Erro processamento metas:', err);
-    }
+    } catch (err) { console.error('Erro metas:', err); }
   }, [supabase, definitions]); 
 
-  // Inicialização
-  useEffect(() => {
-    loadDefinitions();
-  }, [loadDefinitions]);
-
-  // Efeito para carregar dados do Dashboard quando mudar período ou tiver definições
-  useEffect(() => {
-    if (definitions.wards.length > 0) {
-      loadData();
-    }
+  // Efeitos
+  useEffect(() => { loadDefinitions(); }, [loadDefinitions]);
+  useEffect(() => { 
+    if (definitions.wards.length > 0) loadData(); 
   }, [selectedPeriod, definitions.wards, loadData]);
-
-  // Efeito para carregar metas
   useEffect(() => {
-    if (definitions.wards.length > 0) {
-      loadTargetsForYear(selectedYear);
-    }
+    if (definitions.wards.length > 0) loadTargetsForYear(selectedYear);
   }, [selectedYear, definitions, loadTargetsForYear]);
 
 
+  // Calculo derivado para Bloco 3
+  const wardMetrics = getWardMetrics();
+
   return (
     <main className="w-full min-h-screen font-sans">
-      <div className="w-full mx-auto space-y-6">
+      <div className="w-full mx-auto space-y-8">
         
         {/* HEADER */}
         <header className="pt-2 pb-4 text-center md:text-left">
@@ -357,20 +333,21 @@ export default function DashboardPage() {
           </p>
         </header>
 
-        {/* BLOCO 1: RESULTADOS (Com Lógica v1.3) */}
-        <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden p-4 md:p-8 transition-all">
-          
-          <div className="flex flex-col md:flex-row items-center justify-between mb-4 md:mb-6 gap-4 border-b border-slate-100 pb-4">
-            {/* SELETOR DE PERÍODO (Substitui setas de data) */}
-            <div className="flex p-1 bg-slate-100 rounded-xl overflow-hidden">
+        {/* BLOCO 1: RESULTADOS DA ESTACA */}
+        <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden p-4 md:p-8">
+          <div className="flex flex-col md:flex-row items-center justify-between mb-6 gap-4 border-b border-slate-100 pb-4">
+             <div className="flex items-center gap-2">
+                <BarChart3 className="w-5 h-5 text-sky-600" />
+                <h2 className="text-lg font-black text-slate-700">Visão Geral da Estaca</h2>
+             </div>
+             {/* Filtro Global de Período */}
+             <div className="flex p-1 bg-slate-100 rounded-xl overflow-hidden">
                {(['30d', '90d', '12m'] as Period[]).map((p) => (
                  <button
                    key={p}
                    onClick={() => setSelectedPeriod(p)}
                    className={`px-4 py-2 rounded-lg text-xs md:text-sm font-black transition-all ${
-                     selectedPeriod === p 
-                     ? 'bg-white text-sky-700 shadow-sm scale-100' 
-                     : 'text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 scale-95'
+                     selectedPeriod === p ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-400 hover:text-slate-600'
                    }`}
                  >
                    {p === '30d' ? '30 Dias' : p === '90d' ? '90 Dias' : '12 Meses'}
@@ -379,38 +356,28 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* GRID DE CARDS */}
           <div className={`grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-6 ${loading ? 'opacity-50' : ''}`}>
             {mainCards.map((card) => (
-              <div key={card.id} className="group bg-white p-3 md:p-6 rounded-xl md:rounded-2xl border border-slate-100 shadow-sm hover:border-sky-200 hover:shadow-md transition-all duration-300 flex flex-col justify-between h-full min-h-[160px]">
-                
-                {/* Cabeçalho do Card */}
+              <div key={card.id} className="group bg-white p-3 md:p-6 rounded-xl md:rounded-2xl border border-slate-100 shadow-sm hover:border-sky-200 hover:shadow-md transition-all flex flex-col justify-between h-full min-h-[160px]">
                 <div className="flex justify-between items-start mb-2">
                   <div className="flex flex-col">
                     <span className="text-[9px] md:text-xs font-black text-slate-500 uppercase tracking-wide leading-3 pr-1 line-clamp-3">
                         {card.display_name}
                     </span>
-                    {card.details?.subtitle && (
-                        <span className="text-[8px] md:text-[10px] text-slate-400 font-medium mt-1">
-                            {card.details.subtitle}
-                        </span>
-                    )}
+                    <span className="text-[8px] md:text-[10px] text-slate-400 font-medium mt-1">
+                        {card.details?.subtitle}
+                    </span>
                   </div>
                   <div className="p-1.5 md:p-3 bg-slate-50 group-hover:bg-sky-50 rounded-lg md:rounded-2xl transition-colors shrink-0">
                     {ICON_MAP[card.slug]}
                   </div>
                 </div>
-
-                {/* Valor Principal */}
                 <div className="mt-2 mb-2">
                     <p className="text-2xl md:text-4xl font-black text-slate-800 tracking-tight group-hover:text-sky-700 transition-colors">
                     {card.value}
                     </p>
                 </div>
-
-                {/* RANKING (BEST / WORST) */}
                 <div className="mt-auto pt-3 border-t border-slate-50 grid grid-cols-2 gap-2">
-                   {/* Destaque */}
                    <div className="flex flex-col">
                       <div className="flex items-center gap-1 mb-0.5">
                          <Trophy className="w-3 h-3 text-amber-500" />
@@ -421,8 +388,6 @@ export default function DashboardPage() {
                       </span>
                       <span className="text-[9px] text-slate-400">{card.details?.bestValue}</span>
                    </div>
-
-                   {/* Atenção */}
                    <div className="flex flex-col border-l border-slate-50 pl-2">
                       <div className="flex items-center gap-1 mb-0.5">
                          <AlertCircle className="w-3 h-3 text-rose-400" />
@@ -439,7 +404,95 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* BLOCO 2: METAS (MANTIDO INTACTO) */}
+        {/* BLOCO 3: RAIO-X DA UNIDADE (NOVO) */}
+        <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden">
+           <div className="p-4 md:p-8 bg-slate-50/50 border-b border-slate-100 flex flex-col md:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                 <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600">
+                    <Search className="w-5 h-5" />
+                 </div>
+                 <h2 className="text-lg md:text-xl font-black text-slate-800">Raio-X da Unidade</h2>
+              </div>
+              
+              {/* Dropdown de Unidade e Filtro de Período (Replica Visual) */}
+              <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
+                 <select 
+                    value={selectedWardId}
+                    onChange={(e) => setSelectedWardId(e.target.value)}
+                    className="bg-white border border-slate-300 text-slate-700 text-sm rounded-lg focus:ring-sky-500 focus:border-sky-500 block w-full p-2.5 font-bold"
+                 >
+                    {definitions.wards.map(w => (
+                       <option key={w.id} value={w.id}>{w.name}</option>
+                    ))}
+                 </select>
+
+                 <div className="flex p-1 bg-white border border-slate-200 rounded-lg overflow-hidden">
+                    {(['30d', '90d', '12m'] as Period[]).map((p) => (
+                        <button
+                        key={p}
+                        onClick={() => setSelectedPeriod(p)}
+                        className={`px-3 py-1.5 rounded-md text-[10px] md:text-xs font-black transition-all ${
+                            selectedPeriod === p ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-50'
+                        }`}
+                        >
+                        {p}
+                        </button>
+                    ))}
+                 </div>
+              </div>
+           </div>
+
+           <div className="p-4 md:p-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                 {wardMetrics.map((metric) => (
+                    <div key={metric.id} className="bg-slate-50 rounded-xl p-4 border border-slate-100 relative overflow-hidden">
+                       <div className="flex justify-between items-start mb-3">
+                          <div className="flex items-center gap-2">
+                             <div className="text-slate-400 scale-75 origin-left">{ICON_MAP[metric.slug]}</div>
+                             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate max-w-[120px]" title={metric.display_name}>
+                                {metric.display_name}
+                             </span>
+                          </div>
+                       </div>
+                       
+                       <div className="flex items-baseline justify-between mb-2">
+                          <span className="text-2xl font-black text-slate-800">{metric.value}</span>
+                          <div className="text-right">
+                             <span className="block text-[10px] text-slate-400 uppercase font-bold">Meta</span>
+                             <span className="text-sm font-bold text-slate-600">{metric.target}</span>
+                          </div>
+                       </div>
+
+                       {/* Barra de Progresso */}
+                       <div className="w-full bg-slate-200 rounded-full h-1.5 mb-2">
+                          <div 
+                             className={`h-1.5 rounded-full ${metric.progress >= 100 ? 'bg-emerald-500' : 'bg-sky-500'}`} 
+                             style={{ width: `${metric.progress}%` }}
+                          ></div>
+                       </div>
+                       
+                       <div className="flex justify-between items-center text-[10px] font-bold">
+                          <span className={`${metric.progress >= 100 ? 'text-emerald-600' : 'text-sky-600'}`}>
+                             {metric.progress}% Concluído
+                          </span>
+                          {metric.target > 0 && metric.gap > 0 ? (
+                             <span className="text-rose-500">Faltam {metric.gap}</span>
+                          ) : (
+                             metric.target > 0 && <span className="text-emerald-500">Meta Batida!</span>
+                          )}
+                       </div>
+                    </div>
+                 ))}
+                 {wardMetrics.length === 0 && (
+                    <div className="col-span-full text-center py-10 text-slate-400 text-sm font-medium">
+                       Selecione uma unidade para ver o Raio-X.
+                    </div>
+                 )}
+              </div>
+           </div>
+        </section>
+
+        {/* BLOCO 2: METAS (MANTIDO) */}
         <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden">
           <div className="p-4 md:p-8 border-b border-slate-100 flex flex-col md:flex-row items-center justify-between bg-slate-50/50 gap-4">
             
@@ -535,7 +588,7 @@ export default function DashboardPage() {
              Este sistema não é um produto oficial da Igreja de Jesus Cristo dos Santos dos Últimos Dias.
            </p>
            <p className="text-[9px] text-slate-400 font-mono">
-             Versão 1.3.0
+             Versão 1.3.1
            </p>
         </footer>
       </div>
