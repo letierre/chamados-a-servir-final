@@ -23,7 +23,8 @@ type Ward = {
   membership_count: number | null
 }
 
-type Period = '30d' | '90d' | '12m';
+// ATUALIZADO: Novos tipos de período
+type Period = 'current_month' | 'last_month' | '90d' | '12m';
 
 type DashboardData = {
   id: string
@@ -62,36 +63,63 @@ const ICON_MAP: Record<string, any> = {
   recomendacao_templo_sem_investidura: <Award className="w-4 h-4 md:w-6 md:h-6 text-yellow-600" />,
 }
 
+// Helper para labels amigáveis
+const PERIOD_LABELS: Record<Period, string> = {
+  current_month: 'Mês Atual',
+  last_month: 'Mês Passado',
+  '90d': '90 Dias',
+  '12m': '12 Meses'
+}
+
 export default function DashboardPage() {
   const supabase = createClient()
   const [loading, setLoading] = useState(true)
   
   const [mainCards, setMainCards] = useState<DashboardData[]>([])
-  // Novo estado para armazenar dados brutos e permitir recalculo do Bloco 3 sem fetch
   const [cachedRawData, setCachedRawData] = useState<any[]>([]) 
   
-  const [selectedPeriod, setSelectedPeriod] = useState<Period>('30d')
+  // Define padrão como 'current_month'
+  const [selectedPeriod, setSelectedPeriod] = useState<Period>('current_month')
   
-  // Novo Estado: Unidade Selecionada para o Bloco 3
   const [selectedWardId, setSelectedWardId] = useState<string>('')
-
   const [selectedYear, setSelectedYear] = useState(2026) 
   const [definitions, setDefinitions] = useState<{wards: Ward[], indicators: Indicator[]}>({ wards: [], indicators: [] })
   
   const [targetMatrix, setTargetMatrix] = useState<Record<string, Record<string, number>>>({})
   const [stakeTotals, setStakeTotals] = useState<Record<string, number>>({})
 
-  // --- Lógica de Datas ---
+  // --- Lógica de Datas (CORRIGIDA v1.3.2) ---
   const getDateRange = (period: Period) => {
-    const end = new Date();
-    const start = new Date();
+    const now = new Date();
+    const start = new Date(now);
+    const end = new Date(now);
     
-    if (period === '30d') start.setDate(end.getDate() - 30);
-    if (period === '90d') start.setDate(end.getDate() - 90);
-    if (period === '12m') start.setMonth(end.getMonth() - 12);
-    
+    // Zera horas para evitar problemas de timezone/comparação
     start.setHours(0,0,0,0);
     end.setHours(23,59,59,999);
+
+    if (period === 'current_month') {
+        // Do dia 1 do mês atual até hoje
+        start.setDate(1); 
+    } 
+    else if (period === 'last_month') {
+        // Do dia 1 do mês passado até o último dia do mês passado
+        start.setMonth(start.getMonth() - 1);
+        start.setDate(1);
+        
+        // Truque: Dia 0 do mês atual é o último dia do mês anterior
+        const lastDayPrevMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+        lastDayPrevMonth.setHours(23,59,59,999);
+        
+        // Retorna aqui pois o 'end' é diferente de hoje
+        return { start, end: lastDayPrevMonth };
+    } 
+    else if (period === '90d') {
+        start.setDate(start.getDate() - 90);
+    } 
+    else if (period === '12m') {
+        start.setFullYear(start.getFullYear() - 1);
+    }
     
     return { start, end };
   }
@@ -144,11 +172,14 @@ export default function DashboardPage() {
     let mainValue = 0;
     let subtitle = '';
     let calcType: 'sum' | 'avg' | 'snapshot' = 'sum';
+    
+    // Nome amigável para o subtítulo
+    const periodName = PERIOD_LABELS[period];
 
     switch (ind.slug) {
       case 'frequencia_sacramental':
         calcType = 'avg';
-        subtitle = `Média (${period})`;
+        subtitle = `Média (${periodName})`;
         const weeklySums: Record<string, number> = {};
         periodData.forEach(d => { weeklySums[d.week_start] = (weeklySums[d.week_start] || 0) + Number(d.value); });
         const weeks = Object.values(weeklySums);
@@ -157,7 +188,7 @@ export default function DashboardPage() {
       case 'batismo_converso':
       case 'membros_jejuando':
         calcType = 'sum';
-        subtitle = `Total (${period})`;
+        subtitle = `Total (${periodName})`;
         mainValue = periodData.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
         break;
       default:
@@ -219,8 +250,6 @@ export default function DashboardPage() {
 
       // Meta Anual
       const target = targetMatrix[selectedWardId]?.[ind.id] || 0;
-      // Diferença (Meta - Valor). Se for snapshot, é simples. Se for soma, é quanto falta pra meta anual.
-      // Se a meta é 0, não tem gap. Se Valor > Meta, gap é 0.
       const gap = target > 0 ? Math.max(0, target - value) : 0;
       const progress = target > 0 ? Math.min(100, Math.round((value / target) * 100)) : 0;
 
@@ -250,7 +279,7 @@ export default function DashboardPage() {
         .gte('week_start', startIso)
         .lte('week_start', endIso);
       
-      setCachedRawData(rawData || []); // Cache para uso no Bloco 3
+      setCachedRawData(rawData || []); 
 
       if (indicators && definitions.wards.length > 0) {
         const processedCards = indicators.map((ind: Indicator) => {
@@ -272,7 +301,7 @@ export default function DashboardPage() {
       
       if (indicators && wards) {
         setDefinitions({ wards, indicators });
-        if (wards.length > 0) setSelectedWardId(wards[0].id); // Seleciona primeira ala por padrão
+        if (wards.length > 0) setSelectedWardId(wards[0].id); 
       }
     } catch (err) {
       console.error('Erro:', err);
@@ -316,8 +345,9 @@ export default function DashboardPage() {
   }, [selectedYear, definitions, loadTargetsForYear]);
 
 
-  // Calculo derivado para Bloco 3
   const wardMetrics = getWardMetrics();
+  // Array de opções para os botões
+  const PERIOD_OPTIONS: Period[] = ['current_month', 'last_month', '90d', '12m'];
 
   return (
     <main className="w-full min-h-screen font-sans">
@@ -340,17 +370,17 @@ export default function DashboardPage() {
                 <BarChart3 className="w-5 h-5 text-sky-600" />
                 <h2 className="text-lg font-black text-slate-700">Visão Geral da Estaca</h2>
              </div>
-             {/* Filtro Global de Período */}
+             {/* Filtro Global de Período (Atualizado) */}
              <div className="flex p-1 bg-slate-100 rounded-xl overflow-hidden">
-               {(['30d', '90d', '12m'] as Period[]).map((p) => (
+               {PERIOD_OPTIONS.map((p) => (
                  <button
                    key={p}
                    onClick={() => setSelectedPeriod(p)}
-                   className={`px-4 py-2 rounded-lg text-xs md:text-sm font-black transition-all ${
+                   className={`px-4 py-2 rounded-lg text-xs md:text-sm font-black transition-all whitespace-nowrap ${
                      selectedPeriod === p ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-400 hover:text-slate-600'
                    }`}
                  >
-                   {p === '30d' ? '30 Dias' : p === '90d' ? '90 Dias' : '12 Meses'}
+                   {PERIOD_LABELS[p]}
                  </button>
                ))}
             </div>
@@ -404,7 +434,7 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* BLOCO 3: RAIO-X DA UNIDADE (NOVO) */}
+        {/* BLOCO 3: RAIO-X DA UNIDADE */}
         <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden">
            <div className="p-4 md:p-8 bg-slate-50/50 border-b border-slate-100 flex flex-col md:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-3">
@@ -414,7 +444,6 @@ export default function DashboardPage() {
                  <h2 className="text-lg md:text-xl font-black text-slate-800">Raio-X da Unidade</h2>
               </div>
               
-              {/* Dropdown de Unidade e Filtro de Período (Replica Visual) */}
               <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
                  <select 
                     value={selectedWardId}
@@ -426,16 +455,17 @@ export default function DashboardPage() {
                     ))}
                  </select>
 
+                 {/* Filtro de Período Duplicado para Contexto (Sincronizado) */}
                  <div className="flex p-1 bg-white border border-slate-200 rounded-lg overflow-hidden">
-                    {(['30d', '90d', '12m'] as Period[]).map((p) => (
+                    {PERIOD_OPTIONS.map((p) => (
                         <button
                         key={p}
                         onClick={() => setSelectedPeriod(p)}
-                        className={`px-3 py-1.5 rounded-md text-[10px] md:text-xs font-black transition-all ${
+                        className={`px-3 py-1.5 rounded-md text-[10px] md:text-xs font-black transition-all whitespace-nowrap ${
                             selectedPeriod === p ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-50'
                         }`}
                         >
-                        {p}
+                        {PERIOD_LABELS[p]}
                         </button>
                     ))}
                  </div>
@@ -463,7 +493,6 @@ export default function DashboardPage() {
                           </div>
                        </div>
 
-                       {/* Barra de Progresso */}
                        <div className="w-full bg-slate-200 rounded-full h-1.5 mb-2">
                           <div 
                              className={`h-1.5 rounded-full ${metric.progress >= 100 ? 'bg-emerald-500' : 'bg-sky-500'}`} 
@@ -588,7 +617,7 @@ export default function DashboardPage() {
              Este sistema não é um produto oficial da Igreja de Jesus Cristo dos Santos dos Últimos Dias.
            </p>
            <p className="text-[9px] text-slate-400 font-mono">
-             Versão 1.3.1
+             Versão 1.3.2
            </p>
         </footer>
       </div>
