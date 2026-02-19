@@ -1,21 +1,19 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createClient } from '../../lib/supabase/client'
 import { 
-  TrendingUp, Calendar, Users, UserPlus, Heart, Church, 
-  Award, BookOpen, ChevronLeft, ChevronRight, Target,
-  ArrowUpRight, ArrowDownRight, Minus, Trophy, AlertCircle,
+  Users, UserPlus, Heart, Church, 
+  Award, BookOpen, Target,
+  Trophy, AlertCircle,
   Search, BarChart3
 } from 'lucide-react'
 
-// --- Tipos ---
-type Indicator = {
-  id: string
-  slug: string
-  display_name: string
-  order_index: number
-}
+// ═══════════════════════════════════════
+// TIPOS
+// ═══════════════════════════════════════
+
+type Period = 'current_month' | 'last_month' | '90d' | '12m'
 
 type Ward = {
   id: string
@@ -23,36 +21,61 @@ type Ward = {
   membership_count: number | null
 }
 
-// ATUALIZADO: Novos tipos de período
-type Period = 'current_month' | 'last_month' | '90d' | '12m';
-
-type DashboardData = {
+type Indicator = {
   id: string
   slug: string
   display_name: string
-  value: number | string
-  details?: {
-    target?: number
-    percent?: number
-    subtitle?: string
-    trend?: 'up' | 'down' | 'neutral'
-    comparisonLabel?: string
-    subValue?: string | number
-    bestWard?: string
-    bestValue?: number
-    worstWard?: string
-    worstValue?: number
-  }
+  order_index: number
 }
+
+// Tipo que espelha o retorno da function get_dashboard_data_v2
+type RpcRow = {
+  ward_id: string
+  ward_name: string
+  ward_membership: number | null
+  indicator_id: string
+  display_name: string
+  slug: string
+  indicator_type: string
+  aggregation_method: string
+  responsibility: string
+  order_index: number
+  computed_value: number
+}
+
+// Card processado para exibição
+type CardData = {
+  id: string
+  slug: string
+  display_name: string
+  value: number
+  subtitle: string
+  bestWard: string
+  bestValue: number
+  worstWard: string
+  worstValue: number
+}
+
+// Métrica do Raio-X
+type WardMetric = {
+  id: string
+  slug: string
+  display_name: string
+  value: number
+  target: number
+  gap: number
+  progress: number
+}
+
+// ═══════════════════════════════════════
+// CONSTANTES
+// ═══════════════════════════════════════
 
 const COLORS = {
-  primary: '#006184',
-  secondary: '#105970',
   title: '#0e4f66',
-  background: '#f8fafc',
 }
 
-const ICON_MAP: Record<string, any> = {
+const ICON_MAP: Record<string, React.ReactNode> = {
   frequencia_sacramental: <Church className="w-4 h-4 md:w-6 md:h-6 text-sky-600" />,
   batismo_converso: <UserPlus className="w-4 h-4 md:w-6 md:h-6 text-emerald-600" />,
   membros_retornando_a_igreja: <Users className="w-4 h-4 md:w-6 md:h-6 text-orange-600" />,
@@ -63,291 +86,262 @@ const ICON_MAP: Record<string, any> = {
   recomendacao_templo_sem_investidura: <Award className="w-4 h-4 md:w-6 md:h-6 text-yellow-600" />,
 }
 
-// Helper para labels amigáveis
 const PERIOD_LABELS: Record<Period, string> = {
   current_month: 'Mês Atual',
   last_month: 'Mês Passado',
   '90d': '90 Dias',
-  '12m': '12 Meses'
+  '12m': '12 Meses',
 }
+
+const PERIOD_OPTIONS: Period[] = ['current_month', 'last_month', '90d', '12m']
+
+// ═══════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════
+
+function getDateRange(period: Period): { start: string; end: string } {
+  const now = new Date()
+  let start: Date
+  let end: Date
+
+  switch (period) {
+    case 'current_month':
+      start = new Date(now.getFullYear(), now.getMonth(), 1)
+      end = now
+      break
+    case 'last_month':
+      start = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      end = new Date(now.getFullYear(), now.getMonth(), 0) // último dia mês anterior
+      break
+    case '90d':
+      start = new Date(now)
+      start.setDate(start.getDate() - 90)
+      end = now
+      break
+    case '12m':
+      start = new Date(now)
+      start.setFullYear(start.getFullYear() - 1)
+      end = now
+      break
+  }
+
+  return {
+    start: start.toISOString().split('T')[0],
+    end: end.toISOString().split('T')[0],
+  }
+}
+
+/** 
+ * Processa os dados brutos do RPC em cards para a Visão Geral.
+ * Agrupa por indicador, soma os valores das alas, e calcula ranking.
+ */
+function processCards(rows: RpcRow[], period: Period): CardData[] {
+  // Agrupar por indicador
+  const byIndicator = new Map<string, RpcRow[]>()
+  for (const row of rows) {
+    const existing = byIndicator.get(row.indicator_id) || []
+    existing.push(row)
+    byIndicator.set(row.indicator_id, existing)
+  }
+
+  const cards: CardData[] = []
+  const periodLabel = PERIOD_LABELS[period]
+
+  for (const [indicatorId, wardRows] of byIndicator) {
+    const first = wardRows[0]
+    
+    // Valor principal: soma dos computed_value de todas as alas
+    // Para avg (frequência sacramental), o banco já calculou a média por ala,
+    // então somamos as médias para ter o total da estaca por semana.
+    // Na verdade, para a visão geral, queremos a soma das médias das alas
+    // (que é o total médio de frequência da estaca).
+    let mainValue = 0
+    if (first.aggregation_method === 'avg') {
+      // Frequência: soma das médias por ala = média total da estaca
+      mainValue = wardRows.reduce((acc, r) => acc + r.computed_value, 0)
+    } else {
+      // Sum e Last: soma direta
+      mainValue = wardRows.reduce((acc, r) => acc + r.computed_value, 0)
+    }
+
+    // Subtitle baseado no tipo
+    let subtitle = ''
+    if (first.aggregation_method === 'avg') {
+      subtitle = `Média (${periodLabel})`
+    } else if (first.aggregation_method === 'sum') {
+      subtitle = `Total (${periodLabel})`
+    } else {
+      subtitle = 'Atual'
+    }
+
+    // Ranking: normalizado por membership_count
+    let best = { name: '-', value: 0, score: -1 }
+    let worst = { name: '-', value: 0, score: Infinity }
+
+    for (const row of wardRows) {
+      const members = row.ward_membership && row.ward_membership > 0 ? row.ward_membership : 1
+      const score = (row.computed_value / members) * 1000
+
+      if (score > best.score) {
+        best = { name: row.ward_name, value: row.computed_value, score }
+      }
+      if (score < worst.score) {
+        worst = { name: row.ward_name, value: row.computed_value, score }
+      }
+    }
+
+    if (best.score === -1) best = { name: '-', value: 0, score: 0 }
+    if (worst.score === Infinity) worst = { name: '-', value: 0, score: 0 }
+
+    cards.push({
+      id: indicatorId,
+      slug: first.slug,
+      display_name: first.display_name,
+      value: mainValue,
+      subtitle,
+      bestWard: best.name,
+      bestValue: best.value,
+      worstWard: worst.name,
+      worstValue: worst.value,
+    })
+  }
+
+  // Ordenar por order_index
+  const orderMap = new Map(rows.map(r => [r.indicator_id, r.order_index]))
+  cards.sort((a, b) => (orderMap.get(a.id) || 0) - (orderMap.get(b.id) || 0))
+
+  return cards
+}
+
+// ═══════════════════════════════════════
+// COMPONENTE
+// ═══════════════════════════════════════
 
 export default function DashboardPage() {
   const supabase = createClient()
+
+  // Estado
   const [loading, setLoading] = useState(true)
-  
-  const [mainCards, setMainCards] = useState<DashboardData[]>([])
-  const [cachedRawData, setCachedRawData] = useState<any[]>([]) 
-  
-  // Define padrão como 'current_month'
   const [selectedPeriod, setSelectedPeriod] = useState<Period>('current_month')
-  
-  const [selectedWardId, setSelectedWardId] = useState<string>('')
-  const [selectedYear, setSelectedYear] = useState(2026) 
-  const [definitions, setDefinitions] = useState<{wards: Ward[], indicators: Indicator[]}>({ wards: [], indicators: [] })
-  
+  const [selectedWardId, setSelectedWardId] = useState('')
+  const [selectedYear, setSelectedYear] = useState(2026)
+
+  // Dados
+  const [rpcData, setRpcData] = useState<RpcRow[]>([])
+  const [wards, setWards] = useState<Ward[]>([])
+  const [indicators, setIndicators] = useState<Indicator[]>([])
   const [targetMatrix, setTargetMatrix] = useState<Record<string, Record<string, number>>>({})
   const [stakeTotals, setStakeTotals] = useState<Record<string, number>>({})
 
-  // --- Lógica de Datas (CORRIGIDA v1.3.2) ---
-  const getDateRange = (period: Period) => {
-    const now = new Date();
-    const start = new Date(now);
-    const end = new Date(now);
-    
-    // Zera horas para evitar problemas de timezone/comparação
-    start.setHours(0,0,0,0);
-    end.setHours(23,59,59,999);
+  // ─── Carregar definições (uma vez) ───
+  const loadDefinitions = useCallback(async () => {
+    const [indRes, wardRes] = await Promise.all([
+      supabase.from('indicators').select('id, slug, display_name, order_index').eq('active', true).order('order_index'),
+      supabase.from('wards').select('id, name, membership_count').eq('active', true).order('name'),
+    ])
 
-    if (period === 'current_month') {
-        // Do dia 1 do mês atual até hoje
-        start.setDate(1); 
-    } 
-    else if (period === 'last_month') {
-        // Do dia 1 do mês passado até o último dia do mês passado
-        start.setMonth(start.getMonth() - 1);
-        start.setDate(1);
-        
-        // Truque: Dia 0 do mês atual é o último dia do mês anterior
-        const lastDayPrevMonth = new Date(now.getFullYear(), now.getMonth(), 0);
-        lastDayPrevMonth.setHours(23,59,59,999);
-        
-        // Retorna aqui pois o 'end' é diferente de hoje
-        return { start, end: lastDayPrevMonth };
-    } 
-    else if (period === '90d') {
-        start.setDate(start.getDate() - 90);
-    } 
-    else if (period === '12m') {
-        start.setFullYear(start.getFullYear() - 1);
+    if (indRes.data) setIndicators(indRes.data)
+    if (wardRes.data) {
+      setWards(wardRes.data)
+      if (wardRes.data.length > 0) setSelectedWardId(wardRes.data[0].id)
     }
-    
-    return { start, end };
-  }
+  }, [supabase])
 
-  // --- Ranking (Bloco 1) ---
-  const calculateRanking = (indId: string, allData: any[], wards: Ward[], periodStart: Date, periodEnd: Date, type: 'sum' | 'avg' | 'snapshot') => {
-    let bestWard = { name: '-', score: -1, value: 0 };
-    let worstWard = { name: '-', score: 9999999, value: 0 };
+  // ─── Carregar dados via RPC (quando período muda) ───
+  const loadDashboardData = useCallback(async () => {
+    if (wards.length === 0) return
+    setLoading(true)
 
-    wards.forEach(ward => {
-      const wardData = allData.filter(d => 
-        d.indicator_id === indId && d.ward_id === ward.id &&
-        new Date(d.week_start) >= periodStart && new Date(d.week_start) <= periodEnd
-      );
+    try {
+      const { start, end } = getDateRange(selectedPeriod)
 
-      let value = 0;
-      if (wardData.length > 0) {
-        if (type === 'sum') {
-          value = wardData.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
-        } else if (type === 'avg') {
-           const sum = wardData.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
-           value = Math.round(sum / wardData.length);
-        } else if (type === 'snapshot') {
-          const sorted = wardData.sort((a, b) => new Date(b.week_start).getTime() - new Date(a.week_start).getTime());
-          value = Number(sorted[0].value) || 0;
-        }
+      const { data, error } = await supabase.rpc('get_dashboard_data_v2', {
+        p_start: start,
+        p_end: end,
+      })
+
+      if (error) {
+        console.error('Erro RPC:', error)
+        return
       }
 
-      const members = ward.membership_count && ward.membership_count > 0 ? ward.membership_count : 1; 
-      const score = (value / members) * 1000;
+      setRpcData(data || [])
+    } catch (err) {
+      console.error('Erro:', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [supabase, selectedPeriod, wards])
 
-      if (score > bestWard.score) bestWard = { name: ward.name, score, value };
-      if (score < worstWard.score) worstWard = { name: ward.name, score, value };
-    });
+  // ─── Carregar metas do ano ───
+  const loadTargets = useCallback(async () => {
+    if (indicators.length === 0) return
 
-    if (bestWard.score === -1) bestWard = { name: '-', score: 0, value: 0 };
-    if (worstWard.score === 9999999) worstWard = { name: '-', score: 0, value: 0 };
+    const { data: targets } = await supabase
+      .from('targets')
+      .select('*')
+      .eq('year', selectedYear)
 
-    return { best: bestWard, worst: worstWard };
-  }
+    const matrix: Record<string, Record<string, number>> = {}
+    const totals: Record<string, number> = {}
+    indicators.forEach(ind => { totals[ind.id] = 0 })
 
-  // --- Processamento Bloco 1 ---
-  const processPeriodLogic = (ind: Indicator, allData: any[], wards: Ward[], period: Period): DashboardData => {
-    const { start, end } = getDateRange(period);
-    const periodData = allData.filter(d => {
-      const dDate = new Date(d.week_start);
-      return d.indicator_id === ind.id && dDate >= start && dDate <= end;
-    });
-
-    let mainValue = 0;
-    let subtitle = '';
-    let calcType: 'sum' | 'avg' | 'snapshot' = 'sum';
-    
-    // Nome amigável para o subtítulo
-    const periodName = PERIOD_LABELS[period];
-
-    switch (ind.slug) {
-      case 'frequencia_sacramental':
-        calcType = 'avg';
-        subtitle = `Média (${periodName})`;
-        const weeklySums: Record<string, number> = {};
-        periodData.forEach(d => { weeklySums[d.week_start] = (weeklySums[d.week_start] || 0) + Number(d.value); });
-        const weeks = Object.values(weeklySums);
-        mainValue = weeks.length > 0 ? Math.round(weeks.reduce((a,b)=>a+b,0) / weeks.length) : 0;
-        break;
-      case 'batismo_converso':
-      case 'membros_jejuando':
-        calcType = 'sum';
-        subtitle = `Total (${periodName})`;
-        mainValue = periodData.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
-        break;
-      default:
-        calcType = 'snapshot';
-        subtitle = 'Atual';
-        const latestByWard: Record<string, {date: string, value: number}> = {};
-        periodData.forEach(d => {
-           const current = latestByWard[d.ward_id];
-           if (!current || d.week_start > current.date) {
-              latestByWard[d.ward_id] = { date: d.week_start, value: Number(d.value) };
-           }
-        });
-        mainValue = Object.values(latestByWard).reduce((acc, item) => acc + item.value, 0);
+    if (targets) {
+      targets.forEach((t: any) => {
+        const wId = String(t.ward_id)
+        const iId = String(t.indicator_id)
+        const val = Number(t.target_value) || 0
+        if (!matrix[wId]) matrix[wId] = {}
+        matrix[wId][iId] = val
+        if (totals[iId] !== undefined) totals[iId] += val
+      })
     }
 
-    const ranking = calculateRanking(ind.id, allData, wards, start, end, calcType);
+    setTargetMatrix(matrix)
+    setStakeTotals(totals)
+  }, [supabase, selectedYear, indicators])
 
-    return {
-      id: ind.id,
-      slug: ind.slug,
-      display_name: ind.display_name,
-      value: mainValue,
-      details: {
-        subtitle,
-        bestWard: ranking.best.name,
-        bestValue: ranking.best.value,
-        worstWard: ranking.worst.name,
-        worstValue: ranking.worst.value
-      }
-    };
-  }
+  // ─── Effects ───
+  useEffect(() => { loadDefinitions() }, [loadDefinitions])
+  useEffect(() => { loadDashboardData() }, [loadDashboardData])
+  useEffect(() => { loadTargets() }, [loadTargets])
 
-  // --- Processamento Bloco 3 (Raio-X da Unidade) ---
-  const getWardMetrics = () => {
-    if (!selectedWardId || definitions.indicators.length === 0) return [];
-    
-    const { start, end } = getDateRange(selectedPeriod);
+  // ─── Dados processados (memo) ───
 
-    return definitions.indicators.map(ind => {
-      const wardData = cachedRawData.filter(d => 
-        d.indicator_id === ind.id && 
-        d.ward_id === selectedWardId &&
-        new Date(d.week_start) >= start &&
-        new Date(d.week_start) <= end
-      );
+  // BLOCO 1: Cards da Visão Geral
+  const mainCards = useMemo(() => {
+    return processCards(rpcData, selectedPeriod)
+  }, [rpcData, selectedPeriod])
 
-      let value = 0;
-      // Reutiliza lógica de cálculo (Soma/Média/Snapshot)
-      if (ind.slug === 'frequencia_sacramental') {
-          const sum = wardData.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
-          value = wardData.length > 0 ? Math.round(sum / wardData.length) : 0;
-      } else if (['batismo_converso', 'membros_jejuando'].includes(ind.slug)) {
-          value = wardData.reduce((acc, curr) => acc + (Number(curr.value) || 0), 0);
-      } else {
-          // Snapshot
-          const sorted = wardData.sort((a, b) => new Date(b.week_start).getTime() - new Date(a.week_start).getTime());
-          value = sorted.length > 0 ? Number(sorted[0].value) : 0;
-      }
+  // BLOCO 3: Raio-X da Unidade (filtrado por ala selecionada)
+  const wardMetrics: WardMetric[] = useMemo(() => {
+    if (!selectedWardId || indicators.length === 0) return []
 
-      // Meta Anual
-      const target = targetMatrix[selectedWardId]?.[ind.id] || 0;
-      const gap = target > 0 ? Math.max(0, target - value) : 0;
-      const progress = target > 0 ? Math.min(100, Math.round((value / target) * 100)) : 0;
+    return indicators.map(ind => {
+      // Procurar o valor desta ala+indicador nos dados RPC
+      const row = rpcData.find(r => r.ward_id === selectedWardId && r.indicator_id === ind.id)
+      const value = row?.computed_value || 0
+
+      // Meta anual
+      const target = targetMatrix[selectedWardId]?.[ind.id] || 0
+      const gap = target > 0 ? Math.max(0, target - value) : 0
+      const progress = target > 0 ? Math.min(100, Math.round((value / target) * 100)) : 0
 
       return {
-        ...ind,
+        id: ind.id,
+        slug: ind.slug,
+        display_name: ind.display_name,
         value,
         target,
         gap,
-        progress
-      };
-    });
-  }
-
-  // --- Carregamento ---
-  const loadData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const { start, end } = getDateRange(selectedPeriod);
-      const startIso = start.toISOString().split('T')[0];
-      const endIso = end.toISOString().split('T')[0];
-
-      const { data: indicators } = await supabase.from('indicators').select('*').order('order_index');
-      
-      const { data: rawData } = await supabase
-        .from('weekly_indicator_data')
-        .select('*')
-        .gte('week_start', startIso)
-        .lte('week_start', endIso);
-      
-      setCachedRawData(rawData || []); 
-
-      if (indicators && definitions.wards.length > 0) {
-        const processedCards = indicators.map((ind: Indicator) => {
-          return processPeriodLogic(ind, rawData || [], definitions.wards, selectedPeriod);
-        });
-        setMainCards(processedCards);
+        progress,
       }
-    } catch (err) {
-      console.error('Erro:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [supabase, selectedPeriod, definitions.wards]); 
+    })
+  }, [rpcData, selectedWardId, indicators, targetMatrix])
 
-  const loadDefinitions = useCallback(async () => {
-    try {
-      const { data: indicators } = await supabase.from('indicators').select('*').order('order_index');
-      const { data: wards } = await supabase.from('wards').select('id, name, membership_count').order('name');
-      
-      if (indicators && wards) {
-        setDefinitions({ wards, indicators });
-        if (wards.length > 0) setSelectedWardId(wards[0].id); 
-      }
-    } catch (err) {
-      console.error('Erro:', err);
-    }
-  }, [supabase]);
-
-  const loadTargetsForYear = useCallback(async (year: number) => {
-    try {
-      const { data: targets, error } = await supabase
-        .from('targets')
-        .select('*')
-        .eq('year', Number(year));
-      if (error) { return; }
-
-      const matrix: Record<string, Record<string, number>> = {};
-      const totals: Record<string, number> = {};
-      definitions.indicators.forEach(ind => { totals[ind.id] = 0; });
-
-      if (targets && targets.length > 0) {
-        targets.forEach((t: any) => {
-          const wId = String(t.ward_id);
-          const iId = String(t.indicator_id);
-          const val = Number(t.target_value) || 0;
-          if (!matrix[wId]) matrix[wId] = {};
-          matrix[wId][iId] = val;
-          if (totals[iId] !== undefined) totals[iId] += val;
-        });
-      }
-      setTargetMatrix(matrix);
-      setStakeTotals(totals);
-    } catch (err) { console.error('Erro metas:', err); }
-  }, [supabase, definitions]); 
-
-  // Efeitos
-  useEffect(() => { loadDefinitions(); }, [loadDefinitions]);
-  useEffect(() => { 
-    if (definitions.wards.length > 0) loadData(); 
-  }, [selectedPeriod, definitions.wards, loadData]);
-  useEffect(() => {
-    if (definitions.wards.length > 0) loadTargetsForYear(selectedYear);
-  }, [selectedYear, definitions, loadTargetsForYear]);
-
-
-  const wardMetrics = getWardMetrics();
-  // Array de opções para os botões
-  const PERIOD_OPTIONS: Period[] = ['current_month', 'last_month', '90d', '12m'];
+  // ═══════════════════════════════════════
+  // RENDER
+  // ═══════════════════════════════════════
 
   return (
     <main className="w-full min-h-screen font-sans">
@@ -363,39 +357,46 @@ export default function DashboardPage() {
           </p>
         </header>
 
-        {/* BLOCO 1: RESULTADOS DA ESTACA */}
+        {/* ═══════════════════════════════════════ */}
+        {/* BLOCO 1: VISÃO GERAL DA ESTACA         */}
+        {/* ═══════════════════════════════════════ */}
         <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden p-4 md:p-8">
           <div className="flex flex-col md:flex-row items-center justify-between mb-6 gap-4 border-b border-slate-100 pb-4">
-             <div className="flex items-center gap-2">
-                <BarChart3 className="w-5 h-5 text-sky-600" />
-                <h2 className="text-lg font-black text-slate-700">Visão Geral da Estaca</h2>
-             </div>
-             {/* Filtro Global de Período (Atualizado) */}
-             <div className="flex p-1 bg-slate-100 rounded-xl overflow-hidden">
-               {PERIOD_OPTIONS.map((p) => (
-                 <button
-                   key={p}
-                   onClick={() => setSelectedPeriod(p)}
-                   className={`px-4 py-2 rounded-lg text-xs md:text-sm font-black transition-all whitespace-nowrap ${
-                     selectedPeriod === p ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-400 hover:text-slate-600'
-                   }`}
-                 >
-                   {PERIOD_LABELS[p]}
-                 </button>
-               ))}
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-sky-600" />
+              <h2 className="text-lg font-black text-slate-700">Visão Geral da Estaca</h2>
+            </div>
+            {/* Filtro de Período */}
+            <div className="flex p-1 bg-slate-100 rounded-xl overflow-hidden">
+              {PERIOD_OPTIONS.map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setSelectedPeriod(p)}
+                  className={`px-4 py-2 rounded-lg text-xs md:text-sm font-black transition-all whitespace-nowrap ${
+                    selectedPeriod === p
+                      ? 'bg-white text-sky-700 shadow-sm'
+                      : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  {PERIOD_LABELS[p]}
+                </button>
+              ))}
             </div>
           </div>
 
           <div className={`grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-6 ${loading ? 'opacity-50' : ''}`}>
             {mainCards.map((card) => (
-              <div key={card.id} className="group bg-white p-3 md:p-6 rounded-xl md:rounded-2xl border border-slate-100 shadow-sm hover:border-sky-200 hover:shadow-md transition-all flex flex-col justify-between h-full min-h-[160px]">
+              <div
+                key={card.id}
+                className="group bg-white p-3 md:p-6 rounded-xl md:rounded-2xl border border-slate-100 shadow-sm hover:border-sky-200 hover:shadow-md transition-all flex flex-col justify-between h-full min-h-[160px]"
+              >
                 <div className="flex justify-between items-start mb-2">
                   <div className="flex flex-col">
                     <span className="text-[9px] md:text-xs font-black text-slate-500 uppercase tracking-wide leading-3 pr-1 line-clamp-3">
-                        {card.display_name}
+                      {card.display_name}
                     </span>
                     <span className="text-[8px] md:text-[10px] text-slate-400 font-medium mt-1">
-                        {card.details?.subtitle}
+                      {card.subtitle}
                     </span>
                   </div>
                   <div className="p-1.5 md:p-3 bg-slate-50 group-hover:bg-sky-50 rounded-lg md:rounded-2xl transition-colors shrink-0">
@@ -403,134 +404,157 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <div className="mt-2 mb-2">
-                    <p className="text-2xl md:text-4xl font-black text-slate-800 tracking-tight group-hover:text-sky-700 transition-colors">
+                  <p className="text-2xl md:text-4xl font-black text-slate-800 tracking-tight group-hover:text-sky-700 transition-colors">
                     {card.value}
-                    </p>
+                  </p>
                 </div>
                 <div className="mt-auto pt-3 border-t border-slate-50 grid grid-cols-2 gap-2">
-                   <div className="flex flex-col">
-                      <div className="flex items-center gap-1 mb-0.5">
-                         <Trophy className="w-3 h-3 text-amber-500" />
-                         <span className="text-[8px] font-bold text-slate-400 uppercase">Destaque</span>
-                      </div>
-                      <span className="text-[9px] font-bold text-slate-700 truncate" title={card.details?.bestWard}>
-                        {card.details?.bestWard || '-'}
-                      </span>
-                      <span className="text-[9px] text-slate-400">{card.details?.bestValue}</span>
-                   </div>
-                   <div className="flex flex-col border-l border-slate-50 pl-2">
-                      <div className="flex items-center gap-1 mb-0.5">
-                         <AlertCircle className="w-3 h-3 text-rose-400" />
-                         <span className="text-[8px] font-bold text-slate-400 uppercase">Atenção</span>
-                      </div>
-                      <span className="text-[9px] font-bold text-slate-700 truncate" title={card.details?.worstWard}>
-                        {card.details?.worstWard || '-'}
-                      </span>
-                      <span className="text-[9px] text-slate-400">{card.details?.worstValue}</span>
-                   </div>
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-1 mb-0.5">
+                      <Trophy className="w-3 h-3 text-amber-500" />
+                      <span className="text-[8px] font-bold text-slate-400 uppercase">Destaque</span>
+                    </div>
+                    <span className="text-[9px] font-bold text-slate-700 truncate" title={card.bestWard}>
+                      {card.bestWard}
+                    </span>
+                    <span className="text-[9px] text-slate-400">{card.bestValue}</span>
+                  </div>
+                  <div className="flex flex-col border-l border-slate-50 pl-2">
+                    <div className="flex items-center gap-1 mb-0.5">
+                      <AlertCircle className="w-3 h-3 text-rose-400" />
+                      <span className="text-[8px] font-bold text-slate-400 uppercase">Atenção</span>
+                    </div>
+                    <span className="text-[9px] font-bold text-slate-700 truncate" title={card.worstWard}>
+                      {card.worstWard}
+                    </span>
+                    <span className="text-[9px] text-slate-400">{card.worstValue}</span>
+                  </div>
                 </div>
               </div>
             ))}
+            {mainCards.length === 0 && !loading && (
+              <div className="col-span-full text-center py-10 text-slate-400 text-sm font-medium">
+                Nenhum dado encontrado para este período.
+              </div>
+            )}
           </div>
         </section>
 
-        {/* BLOCO 3: RAIO-X DA UNIDADE */}
+        {/* ═══════════════════════════════════════ */}
+        {/* BLOCO 3: RAIO-X DA UNIDADE             */}
+        {/* ═══════════════════════════════════════ */}
         <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden">
-           <div className="p-4 md:p-8 bg-slate-50/50 border-b border-slate-100 flex flex-col md:flex-row items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                 <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600">
-                    <Search className="w-5 h-5" />
-                 </div>
-                 <h2 className="text-lg md:text-xl font-black text-slate-800">Raio-X da Unidade</h2>
+          <div className="p-4 md:p-8 bg-slate-50/50 border-b border-slate-100 flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600">
+                <Search className="w-5 h-5" />
               </div>
-              
-              <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
-                 <select 
-                    value={selectedWardId}
-                    onChange={(e) => setSelectedWardId(e.target.value)}
-                    className="bg-white border border-slate-300 text-slate-700 text-sm rounded-lg focus:ring-sky-500 focus:border-sky-500 block w-full p-2.5 font-bold"
-                 >
-                    {definitions.wards.map(w => (
-                       <option key={w.id} value={w.id}>{w.name}</option>
-                    ))}
-                 </select>
+              <h2 className="text-lg md:text-xl font-black text-slate-800">Raio-X da Unidade</h2>
+            </div>
 
-                 {/* Filtro de Período Duplicado para Contexto (Sincronizado) */}
-                 <div className="flex p-1 bg-white border border-slate-200 rounded-lg overflow-hidden">
-                    {PERIOD_OPTIONS.map((p) => (
-                        <button
-                        key={p}
-                        onClick={() => setSelectedPeriod(p)}
-                        className={`px-3 py-1.5 rounded-md text-[10px] md:text-xs font-black transition-all whitespace-nowrap ${
-                            selectedPeriod === p ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-50'
-                        }`}
-                        >
-                        {PERIOD_LABELS[p]}
-                        </button>
-                    ))}
-                 </div>
+            <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
+              <select
+                value={selectedWardId}
+                onChange={(e) => setSelectedWardId(e.target.value)}
+                className="bg-white border border-slate-300 text-slate-700 text-sm rounded-lg focus:ring-sky-500 focus:border-sky-500 block w-full p-2.5 font-bold"
+              >
+                {wards.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+
+              <div className="flex p-1 bg-white border border-slate-200 rounded-lg overflow-hidden">
+                {PERIOD_OPTIONS.map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => setSelectedPeriod(p)}
+                    className={`px-3 py-1.5 rounded-md text-[10px] md:text-xs font-black transition-all whitespace-nowrap ${
+                      selectedPeriod === p
+                        ? 'bg-slate-800 text-white'
+                        : 'text-slate-400 hover:bg-slate-50'
+                    }`}
+                  >
+                    {PERIOD_LABELS[p]}
+                  </button>
+                ))}
               </div>
-           </div>
+            </div>
+          </div>
 
-           <div className="p-4 md:p-8">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                 {wardMetrics.map((metric) => (
-                    <div key={metric.id} className="bg-slate-50 rounded-xl p-4 border border-slate-100 relative overflow-hidden">
-                       <div className="flex justify-between items-start mb-3">
-                          <div className="flex items-center gap-2">
-                             <div className="text-slate-400 scale-75 origin-left">{ICON_MAP[metric.slug]}</div>
-                             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate max-w-[120px]" title={metric.display_name}>
-                                {metric.display_name}
-                             </span>
-                          </div>
-                       </div>
-                       
-                       <div className="flex items-baseline justify-between mb-2">
-                          <span className="text-2xl font-black text-slate-800">{metric.value}</span>
-                          <div className="text-right">
-                             <span className="block text-[10px] text-slate-400 uppercase font-bold">Meta</span>
-                             <span className="text-sm font-bold text-slate-600">{metric.target}</span>
-                          </div>
-                       </div>
-
-                       <div className="w-full bg-slate-200 rounded-full h-1.5 mb-2">
-                          <div 
-                             className={`h-1.5 rounded-full ${metric.progress >= 100 ? 'bg-emerald-500' : 'bg-sky-500'}`} 
-                             style={{ width: `${metric.progress}%` }}
-                          ></div>
-                       </div>
-                       
-                       <div className="flex justify-between items-center text-[10px] font-bold">
-                          <span className={`${metric.progress >= 100 ? 'text-emerald-600' : 'text-sky-600'}`}>
-                             {metric.progress}% Concluído
-                          </span>
-                          {metric.target > 0 && metric.gap > 0 ? (
-                             <span className="text-rose-500">Faltam {metric.gap}</span>
-                          ) : (
-                             metric.target > 0 && <span className="text-emerald-500">Meta Batida!</span>
-                          )}
-                       </div>
+          <div className="p-4 md:p-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {wardMetrics.map((metric) => (
+                <div
+                  key={metric.id}
+                  className="bg-slate-50 rounded-xl p-4 border border-slate-100 relative overflow-hidden"
+                >
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="text-slate-400 scale-75 origin-left">
+                        {ICON_MAP[metric.slug]}
+                      </div>
+                      <span
+                        className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate max-w-[120px]"
+                        title={metric.display_name}
+                      >
+                        {metric.display_name}
+                      </span>
                     </div>
-                 ))}
-                 {wardMetrics.length === 0 && (
-                    <div className="col-span-full text-center py-10 text-slate-400 text-sm font-medium">
-                       Selecione uma unidade para ver o Raio-X.
+                  </div>
+
+                  <div className="flex items-baseline justify-between mb-2">
+                    <span className="text-2xl font-black text-slate-800">{metric.value}</span>
+                    <div className="text-right">
+                      <span className="block text-[10px] text-slate-400 uppercase font-bold">Meta</span>
+                      <span className="text-sm font-bold text-slate-600">{metric.target}</span>
                     </div>
-                 )}
-              </div>
-           </div>
+                  </div>
+
+                  <div className="w-full bg-slate-200 rounded-full h-1.5 mb-2">
+                    <div
+                      className={`h-1.5 rounded-full ${
+                        metric.progress >= 100 ? 'bg-emerald-500' : 'bg-sky-500'
+                      }`}
+                      style={{ width: `${metric.progress}%` }}
+                    ></div>
+                  </div>
+
+                  <div className="flex justify-between items-center text-[10px] font-bold">
+                    <span className={metric.progress >= 100 ? 'text-emerald-600' : 'text-sky-600'}>
+                      {metric.progress}% Concluído
+                    </span>
+                    {metric.target > 0 && metric.gap > 0 ? (
+                      <span className="text-rose-500">Faltam {metric.gap}</span>
+                    ) : (
+                      metric.target > 0 && <span className="text-emerald-500">Meta Batida!</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {wardMetrics.length === 0 && (
+                <div className="col-span-full text-center py-10 text-slate-400 text-sm font-medium">
+                  Selecione uma unidade para ver o Raio-X.
+                </div>
+              )}
+            </div>
+          </div>
         </section>
 
-        {/* BLOCO 2: METAS (MANTIDO) */}
+        {/* ═══════════════════════════════════════ */}
+        {/* BLOCO 2: METAS                         */}
+        {/* ═══════════════════════════════════════ */}
         <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden">
           <div className="p-4 md:p-8 border-b border-slate-100 flex flex-col md:flex-row items-center justify-between bg-slate-50/50 gap-4">
-            
             <div className="flex items-center gap-3 w-full md:w-auto">
               <div className="p-2 md:p-3 bg-amber-50 rounded-xl shrink-0">
                 <Target className="w-5 h-5 md:w-6 md:h-6 text-amber-600" />
               </div>
               <div>
-                <h2 className="text-base md:text-2xl font-black text-slate-800">Metas {selectedYear}</h2>
+                <h2 className="text-base md:text-2xl font-black text-slate-800">
+                  Metas {selectedYear}
+                </h2>
               </div>
             </div>
 
@@ -540,9 +564,9 @@ export default function DashboardPage() {
                   key={year}
                   onClick={() => setSelectedYear(year)}
                   className={`flex-1 md:flex-none px-3 py-1.5 rounded-md text-[10px] md:text-sm font-black transition-all whitespace-nowrap ${
-                    selectedYear === year 
-                    ? 'bg-sky-700 text-white shadow-sm' 
-                    : 'text-slate-500 hover:bg-slate-50'
+                    selectedYear === year
+                      ? 'bg-sky-700 text-white shadow-sm'
+                      : 'text-slate-500 hover:bg-slate-50'
                   }`}
                 >
                   {year}
@@ -552,73 +576,83 @@ export default function DashboardPage() {
           </div>
 
           <div className="overflow-x-auto relative pb-2">
-            {definitions.wards.length === 0 ? (
-               <div className="p-8 text-center text-slate-400 font-bold text-xs">Carregando...</div>
+            {wards.length === 0 ? (
+              <div className="p-8 text-center text-slate-400 font-bold text-xs">Carregando...</div>
             ) : (
-            <table className="w-full text-left border-collapse whitespace-nowrap">
-              <thead>
-                <tr className="bg-slate-100/50">
-                  <th className="sticky left-0 bg-slate-100 z-20 p-3 text-[9px] md:text-xs font-black text-slate-500 uppercase tracking-widest border-b border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[100px]">
-                    Unidade
-                  </th>
-                  {definitions.indicators.map(ind => (
-                    <th key={ind.id} className="p-2 md:p-3 text-center align-bottom border-b border-slate-200 min-w-[70px] md:min-w-[100px]">
-                      <div className="flex flex-col items-center justify-end w-full gap-1.5">
-                        <div className="shrink-0">
-                             {ICON_MAP[ind.slug]}
-                        </div>
-                        <span className="hidden md:block text-[10px] lg:text-[11px] leading-3 font-bold text-slate-600 uppercase tracking-tight w-full max-w-[120px] whitespace-normal break-words line-clamp-2">
-                          {ind.display_name}
-                        </span>
-                        <span className="md:hidden truncate text-[9px] font-semibold text-slate-500 w-full max-w-[60px]">
-                          {ind.display_name}
-                        </span>
-                      </div>
+              <table className="w-full text-left border-collapse whitespace-nowrap">
+                <thead>
+                  <tr className="bg-slate-100/50">
+                    <th className="sticky left-0 bg-slate-100 z-20 p-3 text-[9px] md:text-xs font-black text-slate-500 uppercase tracking-widest border-b border-r border-slate-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-w-[100px]">
+                      Unidade
                     </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                <tr className="bg-sky-50/30 border-b border-sky-100">
-                  <td className="sticky left-0 bg-sky-50 z-10 p-3 border-r border-sky-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
-                    <span className="font-black text-sky-800 uppercase text-[9px] md:text-xs">Total</span>
-                  </td>
-                  {definitions.indicators.map(ind => (
-                    <td key={ind.id} className="p-3 text-center">
-                      <span className="text-sm md:text-xl font-black text-sky-900">
-                        {stakeTotals[ind.id] || 0}
+                    {indicators.map((ind) => (
+                      <th
+                        key={ind.id}
+                        className="p-2 md:p-3 text-center align-bottom border-b border-slate-200 min-w-[70px] md:min-w-[100px]"
+                      >
+                        <div className="flex flex-col items-center justify-end w-full gap-1.5">
+                          <div className="shrink-0">{ICON_MAP[ind.slug]}</div>
+                          <span className="hidden md:block text-[10px] lg:text-[11px] leading-3 font-bold text-slate-600 uppercase tracking-tight w-full max-w-[120px] whitespace-normal break-words line-clamp-2">
+                            {ind.display_name}
+                          </span>
+                          <span className="md:hidden truncate text-[9px] font-semibold text-slate-500 w-full max-w-[60px]">
+                            {ind.display_name}
+                          </span>
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="bg-sky-50/30 border-b border-sky-100">
+                    <td className="sticky left-0 bg-sky-50 z-10 p-3 border-r border-sky-200 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
+                      <span className="font-black text-sky-800 uppercase text-[9px] md:text-xs">
+                        Total
                       </span>
                     </td>
-                  ))}
-                </tr>
-                {definitions.wards.map(ward => (
-                  <tr key={ward.id} className="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0">
-                    <td className="sticky left-0 bg-white hover:bg-slate-50 z-10 p-3 font-bold text-slate-700 text-[10px] md:text-sm border-r border-slate-100 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
-                      {ward.name}
-                    </td>
-                    {definitions.indicators.map(ind => (
-                      <td key={ind.id} className="p-3 text-center font-bold text-slate-600 text-xs md:text-base">
-                        {targetMatrix[ward.id]?.[ind.id] !== undefined 
-                          ? targetMatrix[ward.id][ind.id] 
-                          : <span className="text-slate-300">-</span>}
+                    {indicators.map((ind) => (
+                      <td key={ind.id} className="p-3 text-center">
+                        <span className="text-sm md:text-xl font-black text-sky-900">
+                          {stakeTotals[ind.id] || 0}
+                        </span>
                       </td>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                  {wards.map((ward) => (
+                    <tr
+                      key={ward.id}
+                      className="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0"
+                    >
+                      <td className="sticky left-0 bg-white hover:bg-slate-50 z-10 p-3 font-bold text-slate-700 text-[10px] md:text-sm border-r border-slate-100 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)]">
+                        {ward.name}
+                      </td>
+                      {indicators.map((ind) => (
+                        <td
+                          key={ind.id}
+                          className="p-3 text-center font-bold text-slate-600 text-xs md:text-base"
+                        >
+                          {targetMatrix[ward.id]?.[ind.id] !== undefined ? (
+                            targetMatrix[ward.id][ind.id]
+                          ) : (
+                            <span className="text-slate-300">-</span>
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         </section>
 
+        {/* FOOTER */}
         <footer className="py-8 border-t border-slate-200 text-center opacity-50 space-y-2">
-           <Church className="w-4 h-4 text-slate-400 mx-auto mb-2" />
-           <p className="text-[10px] text-slate-500 font-medium">
-             Este sistema não é um produto oficial da Igreja de Jesus Cristo dos Santos dos Últimos Dias.
-           </p>
-           <p className="text-[9px] text-slate-400 font-mono">
-             Versão 1.3.2
-           </p>
+          <Church className="w-4 h-4 text-slate-400 mx-auto mb-2" />
+          <p className="text-[10px] text-slate-500 font-medium">
+            Este sistema não é um produto oficial da Igreja de Jesus Cristo dos Santos dos Últimos Dias.
+          </p>
+          <p className="text-[9px] text-slate-400 font-mono">Versão 1.4.0</p>
         </footer>
       </div>
     </main>
