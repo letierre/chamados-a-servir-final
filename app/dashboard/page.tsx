@@ -362,10 +362,11 @@ export default function DashboardPage() {
   // ─── Ações Webhook e Impressão ───
   const handlePrintXRay = () => {
     setIsPrintingXRay(true)
+    // Tempo aumentado para garantir que o react renderize a classe sem cortes
     setTimeout(() => {
       window.print()
       setIsPrintingXRay(false)
-    }, 150)
+    }, 300)
   }
 
   // NOVA LÓGICA DA IA COM BUSCA DE HISTÓRICO
@@ -435,8 +436,8 @@ export default function DashboardPage() {
   // ═══════════════════════════════════════
 
   return (
-    <main className={`w-full min-h-screen font-sans ${isPrintingXRay ? 'is-printing-xray' : ''}`}>
-      <div className="w-full mx-auto space-y-8">
+    <main className={`w-full min-h-screen font-sans ${isPrintingXRay ? 'is-printing-xray print:bg-white print:overflow-visible' : ''}`}>
+      <div className="w-full mx-auto space-y-8 print:space-y-4 print:overflow-visible">
         
         {/* HEADER GERAL */}
         <header className="pt-2 pb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 hide-on-xray-print">
@@ -601,8 +602,8 @@ export default function DashboardPage() {
         </section>
 
         {/* BLOCO 3: RAIO-X DA UNIDADE */}
-        <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden xray-section">
-          <div className="p-4 md:p-8 bg-slate-50/50 border-b border-slate-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden print:overflow-visible xray-section print:shadow-none print:border-none">
+          <div className="p-4 md:p-8 bg-slate-50/50 border-b border-slate-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 hide-on-xray-print">
             
             <div className="flex items-center gap-3 shrink-0">
               <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600 print:hidden">
@@ -652,14 +653,15 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="hidden print:block p-8 pb-0">
+          {/* Cabeçalho que aparece só na Impressão */}
+          <div className="hidden print:block p-8 pb-4 print:p-0 print:mb-6">
             <h1 className="text-3xl font-black text-slate-800">{wards.find(w => w.id === selectedWardId)?.name}</h1>
             <p className="text-sm font-bold text-slate-500">Raio-X de Desempenho • Período: {PERIOD_LABELS[selectedPeriod]}</p>
           </div>
 
-          {/* Analise IA Resultado com Efeito Typing */}
+          {/* Analise IA Resultado com Efeito Typing (Não quebra na impressão) */}
           {(displayedAiResult || aiLoading) && (
-            <div className="m-4 md:m-8 p-5 bg-indigo-50 border border-indigo-100 rounded-2xl relative transition-all">
+            <div className="m-4 md:m-8 p-5 bg-indigo-50 border border-indigo-100 rounded-2xl relative transition-all print:break-inside-avoid print:m-0 print:mb-6 print:border-indigo-300">
               <div className="flex items-center gap-2 mb-3 text-indigo-700">
                 <Bot size={20} />
                 <h3 className="font-black text-sm">Insights da Inteligência Artificial</h3>
@@ -668,7 +670,7 @@ export default function DashboardPage() {
               <p className="text-sm text-indigo-900 font-medium whitespace-pre-wrap leading-relaxed min-h-[20px]">
                 {displayedAiResult}
                 {isTyping && (
-                  <span className="animate-pulse inline-block w-1.5 h-4 ml-0.5 bg-indigo-600 align-middle"></span>
+                  <span className="animate-pulse inline-block w-1.5 h-4 ml-0.5 bg-indigo-600 align-middle print:hidden"></span>
                 )}
                 {aiLoading && !displayedAiResult && (
                   <span className="animate-pulse text-indigo-400">Analisando os dados da unidade...</span>
@@ -677,14 +679,15 @@ export default function DashboardPage() {
             </div>
           )}
 
-          <div className="p-4 md:p-8">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Grid dos Cards forçado a 2 colunas na impressão para não apertar/cortar */}
+          <div className="p-4 md:p-8 print:p-0 print:overflow-visible">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 print:grid-cols-2 print:gap-4 print:overflow-visible">
               {wardMetrics.map((metric) => (
-                <div key={metric.id} className="bg-slate-50 rounded-xl p-4 border border-slate-100 relative overflow-hidden print:border-slate-300">
+                <div key={metric.id} className="bg-slate-50 rounded-xl p-4 border border-slate-100 relative overflow-hidden print:border-slate-300 print:break-inside-avoid print:shadow-none">
                   <div className="flex justify-between items-start mb-3">
                     <div className="flex items-center gap-2">
                       <div className="text-slate-400 scale-75 origin-left">{ICON_MAP[metric.slug]}</div>
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate max-w-[120px]" title={metric.display_name}>
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate max-w-[120px] print:max-w-[180px]" title={metric.display_name}>
                         {metric.display_name}
                       </span>
                     </div>
@@ -823,23 +826,37 @@ export default function DashboardPage() {
       {/* CSS para Impressão Específica do Raio-X */}
       <style dangerouslySetInnerHTML={{ __html: `
         @media print {
-          body {
+          html, body {
+            height: auto !important;
+            overflow: visible !important;
+            background: white !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
-            background: white !important;
           }
-          @page { margin: 1cm; size: A4 portrait; }
           
-          /* Esconde tudo que tem essa classe quando acionado via botão PDF */
+          @page { 
+            margin: 1cm; 
+            size: A4 portrait; 
+          }
+          
+          /* Esconde tudo que não for o Raio-X */
           .is-printing-xray .hide-on-xray-print {
             display: none !important;
           }
           
-          /* Remove margens extras e estilos do card para focar no conteúdo */
+          /* Libera as amarras (overflows e alturas) da sessão */
           .is-printing-xray .xray-section {
             box-shadow: none !important;
             border: none !important;
             padding: 0 !important;
+            overflow: visible !important;
+            display: block !important;
+          }
+
+          /* Evita que um Card ou Texto da IA seja fatiado ao meio pela impressora */
+          .print\\:break-inside-avoid {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
         }
       `}} />
