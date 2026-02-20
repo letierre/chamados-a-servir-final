@@ -653,10 +653,10 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Cabeçalho que aparece só na Impressão */}
-          <div className="hidden print:block p-8 pb-4 print:p-0 print:mb-6">
-            <h1 className="text-3xl font-black text-slate-800">{wards.find(w => w.id === selectedWardId)?.name}</h1>
-            <p className="text-sm font-bold text-slate-500">Raio-X de Desempenho • Período: {PERIOD_LABELS[selectedPeriod]}</p>
+          {/* Cabeçalho que aparece só na Impressão - AJUSTADO PARA NÃO CORTAR O NOME */}
+          <div className="hidden print:block print:pt-6 print:pb-8 print:px-2">
+            <h1 className="text-3xl md:text-4xl font-black text-slate-900 print:break-words">{wards.find(w => w.id === selectedWardId)?.name}</h1>
+            <p className="text-sm font-bold text-slate-500 mt-2 uppercase tracking-wider">Raio-X de Desempenho • {PERIOD_LABELS[selectedPeriod]}</p>
           </div>
 
           {/* Analise IA Resultado com Efeito Typing (Não quebra na impressão) */}
@@ -835,7 +835,7 @@ export default function DashboardPage() {
           }
           
           @page { 
-            margin: 1cm; 
+            margin: 15mm 10mm; 
             size: A4 portrait; 
           }
           
