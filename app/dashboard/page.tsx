@@ -2,11 +2,13 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createClient } from '../../lib/supabase/client'
+import { useRouter } from 'next/navigation'
 import { 
   Users, UserPlus, Heart, Church, 
   Award, BookOpen, Target,
   Trophy, AlertCircle,
-  Search, BarChart3
+  Search, BarChart3,
+  FileText, FileSpreadsheet
 } from 'lucide-react'
 
 // ═══════════════════════════════════════
@@ -219,6 +221,7 @@ function processCards(rows: RpcRow[], period: Period): CardData[] {
 
 export default function DashboardPage() {
   const supabase = createClient()
+  const router = useRouter()
 
   // Estado
   const [loading, setLoading] = useState(true)
@@ -347,14 +350,50 @@ export default function DashboardPage() {
     <main className="w-full min-h-screen font-sans">
       <div className="w-full mx-auto space-y-8">
         
-        {/* HEADER */}
-        <header className="pt-2 pb-4 text-center md:text-left">
-          <h1 className="text-2xl md:text-4xl font-black tracking-tight leading-tight" style={{ color: COLORS.title }}>
-            Dashboard
-          </h1>
-          <p className="text-slate-500 font-bold uppercase text-[10px] md:text-xs tracking-widest mt-1">
-            Análise & Performance
-          </p>
+        {/* HEADER — MUDANÇA: agora flex com botão Exportar à direita */}
+        <header className="pt-2 pb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div className="text-center md:text-left">
+            <h1 className="text-2xl md:text-4xl font-black tracking-tight leading-tight" style={{ color: COLORS.title }}>
+              Dashboard
+            </h1>
+            <p className="text-slate-500 font-bold uppercase text-[10px] md:text-xs tracking-widest mt-1">
+              Análise & Performance
+            </p>
+          </div>
+
+          {/* ─── DROPDOWN EXPORTAR ─── */}
+          <div className="relative group flex justify-center md:justify-end">
+            <button className="flex items-center gap-2 px-5 py-2.5 bg-[#0069a8] text-white font-bold text-xs rounded-xl hover:bg-[#00588d] transition-all shadow-lg">
+              <FileText size={16} />
+              Exportar
+              <svg className="w-3 h-3 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            <div className="absolute right-0 top-full mt-2 bg-white rounded-xl shadow-2xl border border-slate-200 py-2 w-56 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+              <button
+                onClick={() => router.push('/relatorio')}
+                className="w-full text-left px-4 py-3 hover:bg-sky-50 flex items-center gap-3 transition-colors"
+              >
+                <FileText size={16} className="text-[#0069a8] shrink-0" />
+                <div>
+                  <p className="text-sm font-bold text-slate-700">Relatório Visual</p>
+                  <p className="text-[10px] text-slate-400">Imprimir / salvar como PDF</p>
+                </div>
+              </button>
+              <div className="mx-3 my-1 border-t border-slate-100" />
+              <button
+                onClick={() => router.push('/relatorio?csv=1')}
+                className="w-full text-left px-4 py-3 hover:bg-emerald-50 flex items-center gap-3 transition-colors"
+              >
+                <FileSpreadsheet size={16} className="text-emerald-600 shrink-0" />
+                <div>
+                  <p className="text-sm font-bold text-slate-700">Dados Brutos</p>
+                  <p className="text-[10px] text-slate-400">CSV para Excel / Google Sheets</p>
+                </div>
+              </button>
+            </div>
+          </div>
         </header>
 
         {/* ═══════════════════════════════════════ */}
