@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+// CORREÇÃO 1: Adicionado o ReactNode na importação
+import { useEffect, useState, useRef, ReactNode } from 'react'
 import { createClient } from '../../lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import {
@@ -244,7 +245,7 @@ export default function RelatorioPage() {
         <div className="max-w-7xl mx-auto space-y-8 print:space-y-4">
 
           {/* ───────────────────────────────── */}
-          {/*  CAPA / HEADER                    */}
+          {/* CAPA / HEADER                    */}
           {/* ───────────────────────────────── */}
           <section className="bg-white rounded-3xl print:rounded-lg shadow-xl print:shadow border border-slate-200 overflow-hidden">
             <div className="h-3 w-full" style={{ backgroundColor: THEME.primary }} />
@@ -278,7 +279,7 @@ export default function RelatorioPage() {
           </section>
 
           {/* ───────────────────────────────── */}
-          {/*  SEÇÃO 1: RESUMO GERAL            */}
+          {/* SEÇÃO 1: RESUMO GERAL            */}
           {/* ───────────────────────────────── */}
           <section className="bg-white rounded-3xl print:rounded-lg shadow-xl print:shadow border border-slate-200 p-6 md:p-10 print:p-5">
             <SectionHeader icon={<BarChart3 size={22} style={{ color: THEME.primary }} />}
@@ -315,7 +316,7 @@ export default function RelatorioPage() {
           </section>
 
           {/* ───────────────────────────────── */}
-          {/*  SEÇÃO 2: RANKING COMPARATIVO     */}
+          {/* SEÇÃO 2: RANKING COMPARATIVO     */}
           {/* ───────────────────────────────── */}
           <section className="bg-white rounded-3xl print:rounded-lg shadow-xl print:shadow border border-slate-200 p-6 md:p-10 print:p-5 print:break-before-page">
             <SectionHeader icon={<Trophy size={22} className="text-amber-600" />}
@@ -378,7 +379,7 @@ export default function RelatorioPage() {
           </section>
 
           {/* ───────────────────────────────── */}
-          {/*  SEÇÃO 3: GRÁFICOS DE EVOLUÇÃO    */}
+          {/* SEÇÃO 3: GRÁFICOS DE EVOLUÇÃO    */}
           {/* ───────────────────────────────── */}
           <section className="bg-white rounded-3xl print:rounded-lg shadow-xl print:shadow border border-slate-200 p-6 md:p-10 print:p-5 print:break-before-page">
             <SectionHeader icon={<TrendingUp size={22} className="text-sky-600" />}
@@ -424,7 +425,7 @@ export default function RelatorioPage() {
           </section>
 
           {/* ───────────────────────────────── */}
-          {/*  SEÇÃO 4: DETALHAMENTO POR ALA    */}
+          {/* SEÇÃO 4: DETALHAMENTO POR ALA    */}
           {/* ───────────────────────────────── */}
           {wards.map((ward, wIdx) => (
             <section key={ward.id}
@@ -499,8 +500,8 @@ export default function RelatorioPage() {
         </div>
       </main>
 
-      {/* ═══ CSS PRINT ═══ */}
-      <style jsx global>{`
+      {/* CORREÇÃO 2: Estilo de impressão seguro para Next.js App Router */}
+      <style dangerouslySetInnerHTML={{ __html: `
         @media print {
           body {
             -webkit-print-color-adjust: exact !important;
@@ -508,7 +509,7 @@ export default function RelatorioPage() {
           }
           @page { margin: 1cm; size: A4 landscape; }
         }
-      `}</style>
+      `}} />
     </>
   )
 }
@@ -517,8 +518,9 @@ export default function RelatorioPage() {
 /* COMPONENTE AUXILIAR                    */
 /* ═══════════════════════════════════════ */
 
+// CORREÇÃO 1.2: Removido o 'React.' de ReactNode
 function SectionHeader({ icon, bgColor, title, subtitle }: {
-  icon: React.ReactNode; bgColor: string; title: string; subtitle: string
+  icon: ReactNode; bgColor: string; title: string; subtitle: string
 }) {
   return (
     <div className="flex items-center gap-3 mb-8 print:mb-4">

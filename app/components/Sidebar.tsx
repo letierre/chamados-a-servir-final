@@ -1,9 +1,10 @@
 'use client'
-const router = useRouter()
+
+// Removi a linha errada que estava aqui
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-// CORREÇÃO 1: Importar do seu lib local, que gerencia os Cookies corretamente
+// CORREÇÃO 1: Importar do seu lib local
 import { createClient } from '../../lib/supabase/client' 
 import { 
   LayoutDashboard, 
@@ -18,7 +19,7 @@ export default function Sidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [mounted, setMounted] = useState(false)
   const pathname = usePathname()
-  const router = useRouter()
+  const router = useRouter() // <--- Essa é a correta, mantenha esta.
   
   // CORREÇÃO 2: Instanciar usando o helper correto do Next.js
   const supabase = createClient()
