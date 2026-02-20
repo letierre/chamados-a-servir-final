@@ -368,6 +368,7 @@ export default function DashboardPage() {
     }, 150)
   }
 
+  // NOVA LÓGICA DA IA COM BUSCA DE HISTÓRICO
   const handleGenerateAI = async () => {
     if (wardMetrics.length === 0) return
     setAiLoading(true)
@@ -375,16 +376,35 @@ export default function DashboardPage() {
     setDisplayedAiResult(null)
     
     try {
+      // 1. Busca os últimos 90 dias diretamente do Supabase antes de chamar a IA
+      const startHist = new Date()
+      startHist.setDate(startHist.getDate() - 90)
+      
+      const { data: history } = await supabase.rpc('get_report_data', {
+        p_start: startHist.toISOString().split('T')[0],
+        p_end: new Date().toISOString().split('T')[0],
+      })
+
+      // 2. Prepara o nome da unidade e os dados filtrados
       const wardName = wards.find(w => w.id === selectedWardId)?.name || 'Unidade'
+      const historyFiltered = history ? history.filter((h: any) => h.ward_id === selectedWardId) : []
+
+      // 3. Monta o payload final combinando o raio-x e as tendências
       const payload = {
         unidade: wardName,
-        data_geracao: new Date().toLocaleDateString('pt-BR'),
-        metricas: wardMetrics.map(m => ({
+        data_analise: new Date().toLocaleDateString('pt-BR'),
+        periodo_selecionado: PERIOD_LABELS[selectedPeriod],
+        metricas_atuais: wardMetrics.map(m => ({
           indicador: m.display_name,
           valor_atual: m.value,
           meta: m.target,
           progresso: m.progress,
           distancia_meta: m.gap
+        })),
+        historico_90_dias: historyFiltered.map((h: any) => ({
+          indicador: h.display_name,
+          data: h.week_start,
+          valor: h.raw_value
         }))
       }
 
