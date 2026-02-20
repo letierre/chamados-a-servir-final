@@ -212,6 +212,10 @@ export default function DashboardPage() {
   const [isPrintingXRay, setIsPrintingXRay] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
   const [aiResult, setAiResult] = useState<string | null>(null)
+  
+  // Efeito de Digitação da IA
+  const [displayedAiResult, setDisplayedAiResult] = useState<string | null>(null)
+  const [isTyping, setIsTyping] = useState(false)
 
   // Dados
   const [rpcData, setRpcData] = useState<RpcRow[]>([])
@@ -281,7 +285,7 @@ export default function DashboardPage() {
     setIsChartLoading(true)
     try {
       const start = new Date()
-      start.setDate(start.getDate() - 90) // Últimos 90 dias para o gráfico
+      start.setDate(start.getDate() - 90)
 
       const { data } = await supabase.rpc('get_report_data', {
         p_start: start.toISOString().split('T')[0],
@@ -289,7 +293,6 @@ export default function DashboardPage() {
       })
 
       if (data) {
-        // Filtrar apenas a unidade e indicador selecionados no gráfico
         const filtered = data.filter((d: any) => d.ward_id === chartWardId && d.indicator_id === chartIndicatorId)
         const formatted = filtered.map((d: any) => ({
           week: new Date(d.week_start + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }),
@@ -307,8 +310,38 @@ export default function DashboardPage() {
   useEffect(() => { loadTargets() }, [loadTargets])
   useEffect(() => { loadChartData() }, [loadChartData])
 
-  // Ao mudar de unidade no Raio-X, limpar a resposta da IA antiga
-  useEffect(() => { setAiResult(null) }, [selectedWardId])
+  // Ao mudar de unidade no Raio-X, limpar a resposta da IA
+  useEffect(() => { 
+    setAiResult(null) 
+    setDisplayedAiResult(null)
+  }, [selectedWardId])
+
+  // ─── Efeito Máquina de Escrever (Typing Effect) ───
+  useEffect(() => {
+    if (!aiResult) {
+      setDisplayedAiResult(null)
+      setIsTyping(false)
+      return
+    }
+
+    setIsTyping(true)
+    let currentText = ''
+    let currentIndex = 0
+    
+    // Velocidade da digitação (15ms por caractere fica bem natural)
+    const interval = setInterval(() => {
+      if (currentIndex < aiResult.length) {
+        currentText += aiResult[currentIndex]
+        setDisplayedAiResult(currentText)
+        currentIndex++
+      } else {
+        setIsTyping(false)
+        clearInterval(interval)
+      }
+    }, 15) 
+
+    return () => clearInterval(interval)
+  }, [aiResult])
 
   // ─── Dados Processados ───
   const mainCards = useMemo(() => processCards(rpcData, selectedPeriod), [rpcData, selectedPeriod])
@@ -339,6 +372,7 @@ export default function DashboardPage() {
     if (wardMetrics.length === 0) return
     setAiLoading(true)
     setAiResult(null)
+    setDisplayedAiResult(null)
     
     try {
       const wardName = wards.find(w => w.id === selectedWardId)?.name || 'Unidade'
@@ -354,7 +388,6 @@ export default function DashboardPage() {
         }))
       }
 
-      // Dispara o Webhook do n8n
       const response = await fetch('https://webhooks.oryen.agency/webhook/chamados-a-servir-analise-ia', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -363,7 +396,8 @@ export default function DashboardPage() {
 
       const textResponse = await response.text()
       try {
-        const json = JSON.parse(textResponse)
+        let json = JSON.parse(textResponse)
+        if (Array.isArray(json)) json = json[0]
         setAiResult(json.analise || json.output || json.message || textResponse)
       } catch {
         setAiResult(textResponse)
@@ -546,11 +580,10 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* BLOCO 3: RAIO-X DA UNIDADE (Permite Impressão Isolada) */}
+        {/* BLOCO 3: RAIO-X DA UNIDADE */}
         <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden xray-section">
           <div className="p-4 md:p-8 bg-slate-50/50 border-b border-slate-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             
-            {/* Título */}
             <div className="flex items-center gap-3 shrink-0">
               <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600 print:hidden">
                 <Search className="w-5 h-5" />
@@ -558,10 +591,9 @@ export default function DashboardPage() {
               <h2 className="text-lg md:text-xl font-black text-slate-800">Raio-X da Unidade</h2>
             </div>
 
-            {/* Filtros e Botões (Corrigido para não quebrar no mobile) */}
             <div className="flex flex-wrap md:flex-nowrap items-center gap-2 md:gap-3 w-full justify-start md:justify-end print:hidden">
               <button 
-                onClick={handleGenerateAI} disabled={aiLoading}
+                onClick={handleGenerateAI} disabled={aiLoading || isTyping}
                 className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] md:text-xs font-bold rounded-lg transition-colors shadow-sm disabled:opacity-50 shrink-0"
               >
                 {aiLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
@@ -578,7 +610,6 @@ export default function DashboardPage() {
                 <span className="sm:hidden">PDF</span>
               </button>
 
-              {/* Ajuste: Select agora tem max-w para não empurrar os botões de período para fora */}
               <select
                 value={selectedWardId} onChange={(e) => setSelectedWardId(e.target.value)}
                 className="bg-white border border-slate-300 text-slate-700 text-xs md:text-sm rounded-lg focus:ring-sky-500 focus:border-sky-500 p-2 font-bold min-w-[120px] max-w-[160px] md:max-w-[200px] shrink-0"
@@ -601,21 +632,27 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Nome da Unidade apenas na Impressão */}
           <div className="hidden print:block p-8 pb-0">
             <h1 className="text-3xl font-black text-slate-800">{wards.find(w => w.id === selectedWardId)?.name}</h1>
             <p className="text-sm font-bold text-slate-500">Raio-X de Desempenho • Período: {PERIOD_LABELS[selectedPeriod]}</p>
           </div>
 
-          {/* Analise IA Resultado */}
-          {aiResult && (
-            <div className="m-4 md:m-8 p-5 bg-indigo-50 border border-indigo-100 rounded-2xl relative">
+          {/* Analise IA Resultado com Efeito Typing */}
+          {(displayedAiResult || aiLoading) && (
+            <div className="m-4 md:m-8 p-5 bg-indigo-50 border border-indigo-100 rounded-2xl relative transition-all">
               <div className="flex items-center gap-2 mb-3 text-indigo-700">
                 <Bot size={20} />
-                <h3 className="font-black text-sm">Análise de IA (Passado, Presente e Tendências)</h3>
+                <h3 className="font-black text-sm">Insights da Inteligência Artificial</h3>
+                {aiLoading && <Loader2 size={14} className="animate-spin ml-2 text-indigo-400" />}
               </div>
-              <p className="text-sm text-indigo-900 font-medium whitespace-pre-wrap leading-relaxed">
-                {aiResult}
+              <p className="text-sm text-indigo-900 font-medium whitespace-pre-wrap leading-relaxed min-h-[20px]">
+                {displayedAiResult}
+                {isTyping && (
+                  <span className="animate-pulse inline-block w-1.5 h-4 ml-0.5 bg-indigo-600 align-middle"></span>
+                )}
+                {aiLoading && !displayedAiResult && (
+                  <span className="animate-pulse text-indigo-400">Analisando os dados da unidade...</span>
+                )}
               </p>
             </div>
           )}
@@ -759,7 +796,7 @@ export default function DashboardPage() {
           <p className="text-[10px] text-slate-500 font-medium">
             Este sistema não é um produto oficial da Igreja de Jesus Cristo dos Santos dos Últimos Dias.
           </p>
-          <p className="text-[9px] text-slate-400 font-mono">Versão 1.5.0</p>
+          <p className="text-[9px] text-slate-400 font-mono">Versão 1.6.0</p>
         </footer>
       </div>
 
