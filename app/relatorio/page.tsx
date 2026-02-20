@@ -1,6 +1,5 @@
 'use client'
 
-// CORREÇÃO 1: Adicionado o ReactNode na importação
 import { useEffect, useState, useRef, ReactNode } from 'react'
 import { createClient } from '../../lib/supabase/client'
 import { useRouter } from 'next/navigation'
@@ -137,11 +136,15 @@ function processData(raw: RawRow[]): ProcessedData {
   return { indicators, wards, weeks, weeklyByIndicator }
 }
 
+// CORREÇÃO: Usando ponto e vírgula (;) e formatando a data para o Excel BR ler certinho
 function exportCSV(raw: RawRow[]) {
-  const header = 'Ala,Indicador,Tipo,Método,Responsabilidade,Semana,Valor,Membros\n'
-  const rows = raw.map(r =>
-    `"${r.ward_name}","${r.display_name}","${r.indicator_type}","${r.aggregation_method}","${r.responsibility}","${r.week_start}",${r.raw_value},${r.ward_membership}`
-  ).join('\n')
+  const header = 'Ala;Indicador;Tipo;Método;Responsabilidade;Semana;Valor;Membros\n'
+  const rows = raw.map(r => {
+    // Formata a data de "YYYY-MM-DD" para "DD/MM/YYYY" para ficar limpo no Excel
+    const dataFormatada = new Date(r.week_start + 'T12:00:00').toLocaleDateString('pt-BR')
+    return `"${r.ward_name}";"${r.display_name}";"${r.indicator_type}";"${r.aggregation_method}";"${r.responsibility}";"${dataFormatada}";${r.raw_value};${r.ward_membership}`
+  }).join('\n')
+  
   const bom = '\uFEFF'
   const blob = new Blob([bom + header + rows], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
@@ -500,14 +503,25 @@ export default function RelatorioPage() {
         </div>
       </main>
 
-      {/* CORREÇÃO 2: Estilo de impressão seguro para Next.js App Router */}
+      {/* CORREÇÃO 2: Estilo de impressão ajustado para desbloquear o scroll (height: auto) */}
       <style dangerouslySetInnerHTML={{ __html: `
         @media print {
+          html, body, main {
+            height: auto !important;
+            min-height: auto !important;
+            overflow: visible !important;
+          }
           body {
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
           @page { margin: 1cm; size: A4 landscape; }
+          
+          /* Evita que blocos importantes sejam divididos no meio da impressão */
+          section {
+            page-break-inside: avoid;
+            break-inside: avoid;
+          }
         }
       `}} />
     </>
@@ -518,7 +532,6 @@ export default function RelatorioPage() {
 /* COMPONENTE AUXILIAR                    */
 /* ═══════════════════════════════════════ */
 
-// CORREÇÃO 1.2: Removido o 'React.' de ReactNode
 function SectionHeader({ icon, bgColor, title, subtitle }: {
   icon: ReactNode; bgColor: string; title: string; subtitle: string
 }) {
