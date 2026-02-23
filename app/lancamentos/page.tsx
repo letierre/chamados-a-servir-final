@@ -51,6 +51,8 @@ const WARD_ORG_IDS: Record<string, string> = {
 // Mapa: slug do indicador → function que gera a URL dado o wardName
 type LinkBuilder = (wardName: string) => string | null
 
+// Substitua o bloco INDICATOR_LINKS inteiro por este:
+
 const INDICATOR_LINKS: Record<string, LinkBuilder> = {
   frequencia_sacramental: (w) => {
     const unit = WARD_UNITS[w]
@@ -64,7 +66,8 @@ const INDICATOR_LINKS: Record<string, LinkBuilder> = {
     const unit = WARD_UNITS[w]
     return unit ? `https://bl.churchofjesuschrist.org/bp/pt/#/indicate-activity/297490/${unit}` : null
   },
-  membros_retornando: (w) => {
+  // ✅ CORRIGIDO: era "membros_retornando"
+  membros_retornando_a_igreja: (w) => {
     const unit = WARD_UNITS[w]
     return unit ? `https://lcr.churchofjesuschrist.org/one-work/progress-record?lang=por&unitNumber=${unit}&tab=returningMembers` : null
   },
@@ -80,7 +83,8 @@ const INDICATOR_LINKS: Record<string, LinkBuilder> = {
     const unit = WARD_UNITS[w]
     return unit ? `https://lcr.churchofjesuschrist.org/one-work/progress-record?lang=por&unitNumber=${unit}&tab=recentConverts` : null
   },
-  missionarios_servindo: (_w) => {
+  // ✅ CORRIGIDO: era "missionarios_servindo"
+  missionario_servindo_missao_do_brasil: (_w) => {
     return 'https://missionaryrecommendations.churchofjesuschrist.org/recommendations/home/candidates?vctype=ft'
   },
 }
@@ -562,7 +566,7 @@ export default function LancamentosPage() {
 
         {/* Footer */}
         <p className="text-center text-[10px] text-slate-300 font-bold mt-8 uppercase tracking-widest">
-          Chamados a Servir — v1.4.0
+          Chamados a Servir — v1.6.0
         </p>
       </div>
     </main>
