@@ -6,7 +6,7 @@ import {
   History, Calendar, Hash, Building2, Target, 
   ChevronLeft, ChevronRight, Clock, Loader2,
   X, Check, ChevronDown, Edit2, Save, AlertTriangle, Filter,
-  CheckCircle2, AlertCircle
+  CheckCircle2, AlertCircle, Plus, Trash2, UserPlus
 } from 'lucide-react'
 
 // ═══════════════════════════════════════
@@ -28,7 +28,7 @@ type HistoryEntry = {
   created_at: string
   updated_at: string | null
   wards: { id: string; name: string }
-  indicators: { id: string; display_name: string }
+  indicators: { id: string; display_name: string; slug?: string }
 }
 
 type DateRange = { start: string; end: string }
@@ -50,18 +50,14 @@ function getWeekNumber(d: Date) {
   return { week: weekNo, year: date.getUTCFullYear() }
 }
 
-/** Valida os dados do formulário de edição antes de enviar */
 function validateEditForm(value: number, weekStart: string): string | null {
   if (!weekStart) return 'Data é obrigatória.'
   if (isNaN(value) || value < 0) return 'Valor deve ser um número positivo.'
   if (value > 10000) return 'Valor parece muito alto. Verifique.'
-
   const today = new Date().toISOString().split('T')[0]
   if (weekStart > today) return 'Não é possível usar datas futuras.'
-
   const d = new Date(weekStart + 'T12:00:00')
   if (d.getDay() !== 0) return 'A data deve ser um domingo.'
-
   return null
 }
 
@@ -82,25 +78,15 @@ function CheckboxItem({ label, checked, onClick }: { label: string; checked: boo
 
 function ToastMessage({ toast, onClose }: { toast: Toast; onClose: () => void }) {
   if (!toast) return null
-
-  // Auto-dismiss após 4 segundos
-  useEffect(() => {
-    const timer = setTimeout(onClose, 4000)
-    return () => clearTimeout(timer)
-  }, [toast, onClose])
-
+  useEffect(() => { const timer = setTimeout(onClose, 4000); return () => clearTimeout(timer) }, [toast, onClose])
   return (
     <div className="fixed top-6 right-6 z-[200] animate-in slide-in-from-top-3 fade-in duration-300">
       <div className={`flex items-center gap-3 px-5 py-4 rounded-2xl shadow-2xl border ${
-        toast.type === 'success' 
-          ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
-          : 'bg-rose-50 text-rose-800 border-rose-200'
+        toast.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'
       }`}>
         {toast.type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
         <span className="font-bold text-sm">{toast.text}</span>
-        <button onClick={onClose} className="ml-2 opacity-50 hover:opacity-100">
-          <X size={14} />
-        </button>
+        <button onClick={onClose} className="ml-2 opacity-50 hover:opacity-100"><X size={14} /></button>
       </div>
     </div>
   )
@@ -118,6 +104,9 @@ export default function HistoricoPage() {
   const [data, setData] = useState<HistoryEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [totalCount, setTotalCount] = useState(0)
+
+  // Mapa de slugs dos indicadores (para identificar batismo)
+  const [indicatorSlugs, setIndicatorSlugs] = useState<Record<string, string>>({})
 
   // Opções de filtro
   const [filterOptions, setFilterOptions] = useState<{
@@ -146,7 +135,11 @@ export default function HistoricoPage() {
   const [editForm, setEditForm] = useState({ value: 0, week_start: '' })
   const [editError, setEditError] = useState<string | null>(null)
 
-  // Toast de feedback
+  // ─── NOVO: Batismos nominais no modal ───
+  const [editBaptismNames, setEditBaptismNames] = useState<string[]>([])
+  const [loadingBaptisms, setLoadingBaptisms] = useState(false)
+
+  // Toast
   const [toast, setToast] = useState<Toast>(null)
 
   // ─── Fechar dropdown ao clicar fora ───
@@ -164,29 +157,33 @@ export default function HistoricoPage() {
     setActiveDropdown(prev => (prev === name ? null : name))
   }
 
-  // ─── Reset página ao mudar filtros ───
+  // Reset página ao mudar filtros
   useEffect(() => { setPage(1) }, [selectedWards, selectedIndicators, selectedWeekDate, dateRange, pageSize])
 
-  // ─── Carregar opções de filtro ───
+  // ─── Carregar opções de filtro + slugs ───
   useEffect(() => {
     async function loadOptions() {
       const [w, i, weeksRes] = await Promise.all([
         supabase.from('wards').select('id, name').eq('active', true).order('name'),
-        supabase.from('indicators').select('id, display_name').eq('active', true).order('display_name'),
-        // Busca apenas as datas distintas, não todos os registros
+        supabase.from('indicators').select('id, display_name, slug').eq('active', true).order('display_name'),
         supabase.rpc('get_distinct_weeks'),
       ])
+
+      // Guardar mapa de slugs
+      if (i.data) {
+        const slugMap: Record<string, string> = {}
+        i.data.forEach((ind: any) => { slugMap[ind.id] = ind.slug })
+        setIndicatorSlugs(slugMap)
+      }
 
       let uniqueWeeks: { date: string; label: string }[] = []
 
       if (weeksRes.data) {
-        // Se a function RPC existe, usa direto
         uniqueWeeks = weeksRes.data.map((item: any) => {
           const { week, year } = getWeekNumber(new Date(item.week_start + 'T12:00:00'))
           return { date: item.week_start, label: `Semana ${week} (${year})` }
         })
       } else {
-        // Fallback: busca manualmente (caso a function não exista)
         const { data: fallbackWeeks } = await supabase
           .from('weekly_indicator_data')
           .select('week_start')
@@ -202,7 +199,7 @@ export default function HistoricoPage() {
         })
       }
 
-      setFilterOptions({ wards: w.data || [], indicators: i.data || [], weeks: uniqueWeeks })
+      setFilterOptions({ wards: w.data || [], indicators: (i.data || []).map((x: any) => ({ id: x.id, display_name: x.display_name })), weeks: uniqueWeeks })
     }
     loadOptions()
   }, [supabase])
@@ -236,20 +233,120 @@ export default function HistoricoPage() {
     }
   }, [supabase, page, pageSize, selectedWards, selectedIndicators, selectedWeekDate, dateRange])
 
-  useEffect(() => {
-    fetchHistory()
-  }, [fetchHistory])
+  useEffect(() => { fetchHistory() }, [fetchHistory])
+
+  // ─── Helpers batismo ───
+  function addBaptismName() { setEditBaptismNames(prev => [...prev, '']) }
+  function removeBaptismName(index: number) { setEditBaptismNames(prev => prev.filter((_, i) => i !== index)) }
+  function updateBaptismName(index: number, name: string) { setEditBaptismNames(prev => prev.map((n, i) => i === index ? name : n)) }
+
+  // ─── Verificar se é batismo ───
+  function isBaptismRow(row: HistoryEntry): boolean {
+    const slug = indicatorSlugs[row.indicators.id]
+    return slug === 'batismo_converso'
+  }
+
+  // ─── Carregar nomes de batismo ao abrir modal ───
+  async function loadBaptismNames(wardId: string, weekStart: string) {
+    setLoadingBaptisms(true)
+    try {
+      const { data } = await supabase.rpc('get_baptism_names', {
+        p_ward_id: wardId,
+        p_week_start: weekStart,
+      })
+      if (data && data.length > 0) {
+        setEditBaptismNames(data.map((d: any) => d.person_name))
+      } else {
+        // Se não tem nomes mas tem valor, criar campos vazios
+        setEditBaptismNames([''])
+      }
+    } catch {
+      setEditBaptismNames([''])
+    } finally {
+      setLoadingBaptisms(false)
+    }
+  }
 
   // ─── Ações do Modal ───
   const handleUpdate = async () => {
     if (!editingRow) return
+    const isBaptism = isBaptismRow(editingRow)
 
-    // Validar antes de enviar
-    const error = validateEditForm(editForm.value, editForm.week_start)
-    if (error) {
-      setEditError(error)
+    // ─── CASO BATISMO ───
+    if (isBaptism) {
+      const validNames = editBaptismNames.map(n => n.trim()).filter(n => n.length >= 2)
+      const newValue = validNames.length
+
+      if (newValue === 0 && editForm.value === 0) {
+        // Permite salvar zero (sem nomes)
+      } else if (newValue === 0 && editForm.value > 0) {
+        // Tem valor numérico mas sem nomes — OK, salvar só o valor
+      }
+
+      setEditError(null)
+      setActionLoading(true)
+
+      try {
+        const { data: session } = await supabase.auth.getSession()
+        const userId = session.session?.user?.id
+
+        // Atualizar valor numérico
+        const finalValue = validNames.length > 0 ? validNames.length : editForm.value
+        const { error: updateErr } = await supabase
+          .from('weekly_indicator_data')
+          .update({ value: finalValue, week_start: editForm.week_start })
+          .eq('id', editingRow.id)
+
+        if (updateErr) {
+          if (updateErr.code === '23505') {
+            setEditError('Já existe um lançamento para esta ala/indicador neste domingo.')
+          } else {
+            setEditError('Erro ao salvar: ' + updateErr.message)
+          }
+          return
+        }
+
+        // Salvar nomes (delete + insert)
+        if (validNames.length > 0) {
+          await supabase
+            .from('baptism_records')
+            .delete()
+            .eq('ward_id', editingRow.wards.id)
+            .eq('week_start', editForm.week_start)
+
+          // Também deletar nomes da semana original se mudou a data
+          if (editForm.week_start !== editingRow.week_start) {
+            await supabase
+              .from('baptism_records')
+              .delete()
+              .eq('ward_id', editingRow.wards.id)
+              .eq('week_start', editingRow.week_start)
+          }
+
+          await supabase.from('baptism_records').insert(
+            validNames.map(name => ({
+              ward_id: editingRow.wards.id,
+              week_start: editForm.week_start,
+              person_name: name,
+              created_by: userId,
+            }))
+          )
+        }
+
+        setIsEditModalOpen(false)
+        setToast({ type: 'success', text: `Batismo atualizado! ${validNames.length} nome(s) salvos.` })
+        await fetchHistory()
+      } catch {
+        setEditError('Erro inesperado. Tente novamente.')
+      } finally {
+        setActionLoading(false)
+      }
       return
     }
+
+    // ─── CASO PADRÃO ───
+    const error = validateEditForm(editForm.value, editForm.week_start)
+    if (error) { setEditError(error); return }
     setEditError(null)
     setActionLoading(true)
 
@@ -285,6 +382,15 @@ export default function HistoricoPage() {
     setActionLoading(true)
 
     try {
+      // Se for batismo, deletar nomes também
+      if (isBaptismRow(editingRow)) {
+        await supabase
+          .from('baptism_records')
+          .delete()
+          .eq('ward_id', editingRow.wards.id)
+          .eq('week_start', editingRow.week_start)
+      }
+
       const { error } = await supabase.from('weekly_indicator_data').delete().eq('id', editingRow.id)
 
       if (error) {
@@ -307,8 +413,14 @@ export default function HistoricoPage() {
     setEditForm({ value: row.value, week_start: row.week_start })
     setShowDeleteConfirm(false)
     setEditError(null)
+    setEditBaptismNames([])
     setIsEditModalOpen(true)
     setActiveDropdown(null)
+
+    // Se for batismo, carregar nomes existentes
+    if (isBaptismRow(row)) {
+      loadBaptismNames(row.wards.id, row.week_start)
+    }
   }
 
   const clearFilters = () => {
@@ -329,7 +441,6 @@ export default function HistoricoPage() {
 
   return (
     <main className="min-h-screen p-4 md:p-8 lg:p-12" style={{ backgroundColor: THEME.bg }}>
-      {/* Toast de feedback */}
       <ToastMessage toast={toast} onClose={() => setToast(null)} />
 
       <div className="max-w-7xl mx-auto space-y-4 md:space-y-6" ref={dropdownRef}>
@@ -340,21 +451,16 @@ export default function HistoricoPage() {
             <h1 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">Histórico</h1>
             <div className="flex items-center gap-2 mt-1">
               <span className="flex h-2 w-2 rounded-full bg-emerald-500"></span>
-              <p className="text-slate-500 text-xs font-bold uppercase tracking-widest">
-                {totalCount} Registros
-              </p>
+              <p className="text-slate-500 text-xs font-bold uppercase tracking-widest">{totalCount} Registros</p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* Botão filtros mobile */}
             <div className="md:hidden w-full">
-              <button
-                onClick={() => setMobileFiltersOpen(!mobileFiltersOpen)}
+              <button onClick={() => setMobileFiltersOpen(!mobileFiltersOpen)}
                 className={`flex items-center justify-between w-full border text-xs font-bold rounded-xl px-4 py-3 transition-all ${
                   hasActiveFilters ? 'bg-sky-50 border-sky-200 text-sky-700' : 'bg-slate-50 border-slate-200 text-slate-600'
-                }`}
-              >
+                }`}>
                 <div className="flex items-center gap-2">
                   <Filter size={14} />
                   {hasActiveFilters ? 'Filtros Ativos' : 'Filtrar Dados'}
@@ -364,21 +470,16 @@ export default function HistoricoPage() {
             </div>
 
             {hasActiveFilters && (
-              <button
-                onClick={clearFilters}
-                className="hidden md:block text-xs font-bold text-rose-500 hover:bg-rose-50 px-4 py-2.5 rounded-xl transition-all border border-transparent hover:border-rose-100"
-              >
+              <button onClick={clearFilters}
+                className="hidden md:block text-xs font-bold text-rose-500 hover:bg-rose-50 px-4 py-2.5 rounded-xl transition-all border border-transparent hover:border-rose-100">
                 Limpar Filtros
               </button>
             )}
 
             <div className="h-10 w-px bg-slate-200 hidden md:block mx-2"></div>
 
-            <select
-              value={pageSize}
-              onChange={(e) => setPageSize(Number(e.target.value))}
-              className="flex-1 md:flex-none bg-slate-50 border-slate-200 text-slate-600 text-xs font-bold rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-sky-500/20"
-            >
+            <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}
+              className="flex-1 md:flex-none bg-slate-50 border-slate-200 text-slate-600 text-xs font-bold rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-sky-500/20">
               <option value={15}>15 / pág</option>
               <option value={50}>50 / pág</option>
               <option value={100}>100 / pág</option>
@@ -391,58 +492,30 @@ export default function HistoricoPage() {
           <div className="md:hidden bg-white p-5 rounded-3xl shadow-lg border border-slate-100 space-y-5 animate-in slide-in-from-top-2">
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Semana de Referência</label>
-              <select
-                value={selectedWeekDate}
-                onChange={(e) => setSelectedWeekDate(e.target.value)}
-                className="w-full bg-slate-50 border-slate-200 text-slate-700 text-sm font-bold rounded-xl p-3 outline-none"
-              >
+              <select value={selectedWeekDate} onChange={(e) => setSelectedWeekDate(e.target.value)}
+                className="w-full bg-slate-50 border-slate-200 text-slate-700 text-sm font-bold rounded-xl p-3 outline-none">
                 <option value="">Todas as Semanas</option>
-                {filterOptions.weeks.map((w) => (
-                  <option key={w.date} value={w.date}>{w.label}</option>
-                ))}
+                {filterOptions.weeks.map((w) => (<option key={w.date} value={w.date}>{w.label}</option>))}
               </select>
             </div>
-
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                Unidades ({selectedWards.length})
-              </label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Unidades ({selectedWards.length})</label>
               <div className="max-h-32 overflow-y-auto border border-slate-100 rounded-xl p-2 bg-slate-50">
                 {filterOptions.wards.map((ward) => (
-                  <CheckboxItem
-                    key={ward.id}
-                    label={ward.name}
-                    checked={selectedWards.includes(ward.id)}
-                    onClick={() =>
-                      setSelectedWards((prev) =>
-                        prev.includes(ward.id) ? prev.filter((id) => id !== ward.id) : [...prev, ward.id]
-                      )
-                    }
-                  />
+                  <CheckboxItem key={ward.id} label={ward.name} checked={selectedWards.includes(ward.id)}
+                    onClick={() => setSelectedWards((prev) => prev.includes(ward.id) ? prev.filter((id) => id !== ward.id) : [...prev, ward.id])} />
                 ))}
               </div>
             </div>
-
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                Indicadores ({selectedIndicators.length})
-              </label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Indicadores ({selectedIndicators.length})</label>
               <div className="max-h-32 overflow-y-auto border border-slate-100 rounded-xl p-2 bg-slate-50">
                 {filterOptions.indicators.map((ind) => (
-                  <CheckboxItem
-                    key={ind.id}
-                    label={ind.display_name}
-                    checked={selectedIndicators.includes(ind.id)}
-                    onClick={() =>
-                      setSelectedIndicators((prev) =>
-                        prev.includes(ind.id) ? prev.filter((id) => id !== ind.id) : [...prev, ind.id]
-                      )
-                    }
-                  />
+                  <CheckboxItem key={ind.id} label={ind.display_name} checked={selectedIndicators.includes(ind.id)}
+                    onClick={() => setSelectedIndicators((prev) => prev.includes(ind.id) ? prev.filter((id) => id !== ind.id) : [...prev, ind.id])} />
                 ))}
               </div>
             </div>
-
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Data de Lançamento</label>
               <div className="flex gap-2">
@@ -452,11 +525,8 @@ export default function HistoricoPage() {
                   className="flex-1 bg-slate-50 border-slate-200 text-slate-600 text-xs font-bold rounded-xl p-2.5 outline-none" />
               </div>
             </div>
-
             {hasActiveFilters && (
-              <button onClick={clearFilters} className="w-full py-3 bg-rose-50 text-rose-600 font-bold rounded-xl text-xs">
-                Limpar Todos os Filtros
-              </button>
+              <button onClick={clearFilters} className="w-full py-3 bg-rose-50 text-rose-600 font-bold rounded-xl text-xs">Limpar Todos os Filtros</button>
             )}
           </div>
         )}
@@ -475,7 +545,6 @@ export default function HistoricoPage() {
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50/50 border-b border-slate-100">
-                    {/* SEMANA */}
                     <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest relative w-[18%]">
                       <button onClick={() => toggleDropdown('week')}
                         className={`flex items-center gap-2 hover:text-sky-600 transition-colors ${selectedWeekDate ? 'text-sky-600' : ''}`}>
@@ -484,26 +553,18 @@ export default function HistoricoPage() {
                       </button>
                       {activeDropdown === 'week' && (
                         <div className="absolute top-full left-4 mt-2 w-64 bg-white shadow-2xl rounded-2xl border border-slate-100 z-50 p-2 max-h-80 overflow-y-auto animate-in slide-in-from-top-2">
-                          <div className="p-3 border-b border-slate-50 mb-1">
-                            <span className="text-xs font-bold text-slate-800">Filtrar por Semana</span>
-                          </div>
+                          <div className="p-3 border-b border-slate-50 mb-1"><span className="text-xs font-bold text-slate-800">Filtrar por Semana</span></div>
                           <div onClick={() => { setSelectedWeekDate(''); setActiveDropdown(null) }}
-                            className="p-2.5 text-xs font-medium hover:bg-slate-50 cursor-pointer rounded-lg text-slate-500 mb-1">
-                            Todas as Semanas
-                          </div>
+                            className="p-2.5 text-xs font-medium hover:bg-slate-50 cursor-pointer rounded-lg text-slate-500 mb-1">Todas as Semanas</div>
                           {filterOptions.weeks.map((w) => (
                             <div key={w.date} onClick={() => { setSelectedWeekDate(w.date); setActiveDropdown(null) }}
                               className={`p-2.5 text-xs cursor-pointer rounded-lg flex justify-between items-center mb-1 transition-colors ${
                                 selectedWeekDate === w.date ? 'bg-sky-50 text-sky-700 font-bold' : 'hover:bg-slate-50 text-slate-600'
-                              }`}>
-                              {w.label} {selectedWeekDate === w.date && <Check size={12} />}
-                            </div>
+                              }`}>{w.label} {selectedWeekDate === w.date && <Check size={12} />}</div>
                           ))}
                         </div>
                       )}
                     </th>
-
-                    {/* UNIDADE */}
                     <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest relative w-[25%]">
                       <button onClick={() => toggleDropdown('wards')}
                         className={`flex items-center gap-2 hover:text-sky-600 transition-colors ${selectedWards.length > 0 ? 'text-sky-600' : ''}`}>
@@ -514,9 +575,7 @@ export default function HistoricoPage() {
                         <div className="absolute top-full left-0 mt-2 w-72 bg-white shadow-2xl rounded-2xl border border-slate-100 z-50 p-3 max-h-80 overflow-hidden flex flex-col animate-in slide-in-from-top-2">
                           <div className="flex justify-between items-center mb-2 pb-2 border-b border-slate-50">
                             <span className="text-xs font-bold text-slate-800">Selecionar Unidades</span>
-                            {selectedWards.length > 0 && (
-                              <button onClick={() => setSelectedWards([])} className="text-[10px] font-bold text-rose-500 hover:text-rose-600">Limpar</button>
-                            )}
+                            {selectedWards.length > 0 && (<button onClick={() => setSelectedWards([])} className="text-[10px] font-bold text-rose-500 hover:text-rose-600">Limpar</button>)}
                           </div>
                           <div className="overflow-y-auto flex-1 pr-1">
                             {filterOptions.wards.map((ward) => (
@@ -527,8 +586,6 @@ export default function HistoricoPage() {
                         </div>
                       )}
                     </th>
-
-                    {/* INDICADOR */}
                     <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest relative w-[25%]">
                       <button onClick={() => toggleDropdown('indicators')}
                         className={`flex items-center gap-2 hover:text-sky-600 transition-colors ${selectedIndicators.length > 0 ? 'text-sky-600' : ''}`}>
@@ -539,9 +596,7 @@ export default function HistoricoPage() {
                         <div className="absolute top-full left-0 mt-2 w-80 bg-white shadow-2xl rounded-2xl border border-slate-100 z-50 p-3 max-h-80 overflow-hidden flex flex-col animate-in slide-in-from-top-2">
                           <div className="flex justify-between items-center mb-2 pb-2 border-b border-slate-50">
                             <span className="text-xs font-bold text-slate-800">Selecionar Indicadores</span>
-                            {selectedIndicators.length > 0 && (
-                              <button onClick={() => setSelectedIndicators([])} className="text-[10px] font-bold text-rose-500 hover:text-rose-600">Limpar</button>
-                            )}
+                            {selectedIndicators.length > 0 && (<button onClick={() => setSelectedIndicators([])} className="text-[10px] font-bold text-rose-500 hover:text-rose-600">Limpar</button>)}
                           </div>
                           <div className="overflow-y-auto flex-1 pr-1">
                             {filterOptions.indicators.map((ind) => (
@@ -552,12 +607,9 @@ export default function HistoricoPage() {
                         </div>
                       )}
                     </th>
-
                     <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center w-[10%]">
                       <div className="flex items-center justify-center gap-2"><Hash size={14} /> Valor</div>
                     </th>
-
-                    {/* LANÇAMENTO */}
                     <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right relative w-[20%]">
                       <button onClick={() => toggleDropdown('launch')}
                         className={`flex items-center justify-end w-full gap-2 hover:text-sky-600 transition-colors ${dateRange.start || dateRange.end ? 'text-sky-600' : ''}`}>
@@ -568,9 +620,7 @@ export default function HistoricoPage() {
                         <div className="absolute top-full right-4 mt-2 w-72 bg-white shadow-2xl rounded-2xl border border-slate-100 z-50 p-4 animate-in slide-in-from-top-2 cursor-default">
                           <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-50">
                             <span className="text-xs font-bold text-slate-800">Intervalo de Data</span>
-                            {(dateRange.start || dateRange.end) && (
-                              <button onClick={() => setDateRange({ start: '', end: '' })} className="text-[10px] font-bold text-rose-500 hover:text-rose-600">Limpar</button>
-                            )}
+                            {(dateRange.start || dateRange.end) && (<button onClick={() => setDateRange({ start: '', end: '' })} className="text-[10px] font-bold text-rose-500 hover:text-rose-600">Limpar</button>)}
                           </div>
                           <div className="space-y-3">
                             <div className="space-y-1">
@@ -587,21 +637,17 @@ export default function HistoricoPage() {
                         </div>
                       )}
                     </th>
-
                     <th className="p-6 w-[2%]"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {data.length === 0 && !loading && (
-                    <tr>
-                      <td colSpan={6} className="p-12 text-center text-slate-400 text-sm font-medium">
-                        Nenhum registro encontrado com os filtros selecionados.
-                      </td>
-                    </tr>
+                    <tr><td colSpan={6} className="p-12 text-center text-slate-400 text-sm font-medium">Nenhum registro encontrado com os filtros selecionados.</td></tr>
                   )}
                   {data.map((row) => {
                     const { week, year } = getWeekNumber(new Date(row.week_start + 'T12:00:00'))
                     const wasEdited = !!row.updated_at
+                    const isBaptism = isBaptismRow(row)
                     return (
                       <tr key={row.id} className="group hover:bg-slate-50/80 transition-all">
                         <td className="p-6">
@@ -609,32 +655,19 @@ export default function HistoricoPage() {
                           <span className="text-[10px] text-slate-400 block font-medium">{year}</span>
                         </td>
                         <td className="p-6">
-                          <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-600 text-[10px] font-black uppercase border border-slate-200">
-                            {row.wards.name}
-                          </span>
+                          <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-600 text-[10px] font-black uppercase border border-slate-200">{row.wards.name}</span>
                         </td>
                         <td className="p-6">
-                          <span className="text-sm font-semibold text-slate-600 group-hover:text-sky-700 transition-colors">
-                            {row.indicators.display_name}
-                          </span>
+                          <span className="text-sm font-semibold text-slate-600 group-hover:text-sky-700 transition-colors">{row.indicators.display_name}</span>
+                          {isBaptism && <span className="text-[9px] text-emerald-500 font-bold block mt-0.5">nominal</span>}
                         </td>
                         <td className="p-6 text-center">
-                          <span className="text-base font-black text-slate-800 bg-slate-50 px-3 py-1 rounded-lg border border-slate-100">
-                            {row.value}
-                          </span>
+                          <span className="text-base font-black text-slate-800 bg-slate-50 px-3 py-1 rounded-lg border border-slate-100">{row.value}</span>
                         </td>
                         <td className="p-6 text-right">
-                          <span className="text-[11px] font-bold text-slate-500">
-                            {new Date(row.created_at).toLocaleDateString('pt-BR')}
-                          </span>
-                          <span className="text-[10px] text-slate-300 block">
-                            {new Date(row.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                          {wasEdited && (
-                            <span className="text-[9px] text-amber-500 font-bold block mt-0.5">
-                              editado {new Date(row.updated_at!).toLocaleDateString('pt-BR')}
-                            </span>
-                          )}
+                          <span className="text-[11px] font-bold text-slate-500">{new Date(row.created_at).toLocaleDateString('pt-BR')}</span>
+                          <span className="text-[10px] text-slate-300 block">{new Date(row.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+                          {wasEdited && (<span className="text-[9px] text-amber-500 font-bold block mt-0.5">editado {new Date(row.updated_at!).toLocaleDateString('pt-BR')}</span>)}
                         </td>
                         <td className="p-6 text-right">
                           <button onClick={() => openEditModal(row)}
@@ -653,34 +686,30 @@ export default function HistoricoPage() {
           {/* ═══ CARDS MOBILE ═══ */}
           <div className="md:hidden space-y-3">
             {data.length === 0 && !loading && (
-              <div className="text-center py-10 text-slate-400 text-sm font-medium bg-white rounded-3xl border border-slate-100">
-                Nenhum registro encontrado.
-              </div>
+              <div className="text-center py-10 text-slate-400 text-sm font-medium bg-white rounded-3xl border border-slate-100">Nenhum registro encontrado.</div>
             )}
             {data.map((row) => {
               const { week, year } = getWeekNumber(new Date(row.week_start + 'T12:00:00'))
               const wasEdited = !!row.updated_at
+              const isBaptism = isBaptismRow(row)
               return (
                 <div key={row.id} className="bg-white p-5 rounded-3xl shadow-sm border border-slate-200 flex flex-col gap-3 relative">
                   <div className="flex justify-between items-start gap-3">
                     <div className="flex flex-col">
                       <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Indicador</span>
                       <span className="text-sm font-bold text-slate-800 leading-tight">{row.indicators.display_name}</span>
+                      {isBaptism && <span className="text-[9px] text-emerald-500 font-bold mt-0.5">nominal</span>}
                     </div>
                     <div className="bg-slate-50 border border-slate-100 px-3 py-2 rounded-xl flex flex-col items-center min-w-[3.5rem]">
                       <span className="text-[10px] text-slate-400 font-bold uppercase">Valor</span>
                       <span className="text-lg font-black text-slate-800">{row.value}</span>
                     </div>
                   </div>
-
                   <div className="h-px bg-slate-100 w-full my-1"></div>
-
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Unidade</span>
-                      <span className="inline-block px-2 py-1 rounded-lg bg-slate-100 text-slate-600 text-[10px] font-bold border border-slate-200">
-                        {row.wards.name}
-                      </span>
+                      <span className="inline-block px-2 py-1 rounded-lg bg-slate-100 text-slate-600 text-[10px] font-bold border border-slate-200">{row.wards.name}</span>
                     </div>
                     <div>
                       <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Semana Ref.</span>
@@ -690,24 +719,17 @@ export default function HistoricoPage() {
                       </div>
                     </div>
                   </div>
-
                   <div className="flex justify-between items-end mt-2 pt-3 border-t border-slate-50">
                     <div className="flex flex-col">
                       <div className="flex items-center gap-1.5 text-slate-400">
                         <Clock size={12} />
                         <span className="text-[10px] font-medium">
-                          {new Date(row.created_at).toLocaleDateString('pt-BR')} às{' '}
-                          {new Date(row.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                          {new Date(row.created_at).toLocaleDateString('pt-BR')} às {new Date(row.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                         </span>
                       </div>
-                      {wasEdited && (
-                        <span className="text-[9px] text-amber-500 font-bold mt-0.5 ml-5">
-                          editado {new Date(row.updated_at!).toLocaleDateString('pt-BR')}
-                        </span>
-                      )}
+                      {wasEdited && (<span className="text-[9px] text-amber-500 font-bold mt-0.5 ml-5">editado {new Date(row.updated_at!).toLocaleDateString('pt-BR')}</span>)}
                     </div>
-                    <button onClick={() => openEditModal(row)}
-                      className="p-2 text-sky-600 bg-sky-50 hover:bg-sky-100 rounded-xl transition-all">
+                    <button onClick={() => openEditModal(row)} className="p-2 text-sky-600 bg-sky-50 hover:bg-sky-100 rounded-xl transition-all">
                       <Edit2 size={16} />
                     </button>
                   </div>
@@ -718,9 +740,7 @@ export default function HistoricoPage() {
 
           {/* PAGINAÇÃO */}
           <div className="mt-4 md:mt-0 p-4 md:p-6 bg-white md:bg-slate-50/50 md:border-t border-slate-100 rounded-3xl md:rounded-t-none md:rounded-b-[2.5rem] flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm md:shadow-none border border-slate-200 md:border-0">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest order-2 sm:order-1">
-              Página {page} de {totalPages}
-            </p>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest order-2 sm:order-1">Página {page} de {totalPages}</p>
             <div className="flex items-center gap-2 order-1 sm:order-2 w-full sm:w-auto justify-center">
               <button disabled={page === 1} onClick={() => setPage((p) => p - 1)}
                 className="flex-1 sm:flex-none p-3 md:p-2 rounded-xl bg-white border border-slate-200 text-slate-400 hover:text-sky-600 disabled:opacity-30 transition-all shadow-sm flex justify-center">
@@ -749,31 +769,81 @@ export default function HistoricoPage() {
                       <p className="text-slate-400 text-sm font-medium pr-4">{editingRow?.indicators.display_name}</p>
                       <p className="text-slate-300 text-xs font-medium mt-0.5">{editingRow?.wards.name}</p>
                     </div>
-                    <button onClick={() => setIsEditModalOpen(false)} className="text-slate-300 hover:text-slate-500 p-2 -mr-2 -mt-2">
-                      <X />
-                    </button>
+                    <button onClick={() => setIsEditModalOpen(false)} className="text-slate-300 hover:text-slate-500 p-2 -mr-2 -mt-2"><X /></button>
                   </div>
 
                   <div className="space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                          Data Referência (Domingo)
-                        </label>
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Data Referência (Domingo)</label>
                         <input type="date" value={editForm.week_start}
                           onChange={(e) => { setEditForm({ ...editForm, week_start: e.target.value }); setEditError(null) }}
                           className="w-full bg-slate-50 border-slate-200 rounded-2xl p-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-sky-500/20" />
                       </div>
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Valor</label>
-                        <input type="number" value={editForm.value} min={0} max={10000}
-                          onChange={(e) => { setEditForm({ ...editForm, value: Number(e.target.value) }); setEditError(null) }}
-                          className="w-full bg-slate-50 border-slate-200 rounded-2xl p-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-sky-500/20" />
-                      </div>
+
+                      {/* Valor numérico — para batismo mostra como readonly (calculado) */}
+                      {editingRow && !isBaptismRow(editingRow) && (
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Valor</label>
+                          <input type="number" value={editForm.value} min={0} max={10000}
+                            onChange={(e) => { setEditForm({ ...editForm, value: Number(e.target.value) }); setEditError(null) }}
+                            className="w-full bg-slate-50 border-slate-200 rounded-2xl p-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-sky-500/20" />
+                        </div>
+                      )}
+
+                      {editingRow && isBaptismRow(editingRow) && (
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contagem</label>
+                          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 text-sm font-black text-emerald-700 text-center">
+                            {editBaptismNames.filter(n => n.trim().length >= 2).length || editForm.value} pessoa(s)
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  {/* Mensagem de erro inline */}
+                  {/* ─── NOMES DE BATISMO ─── */}
+                  {editingRow && isBaptismRow(editingRow) && (
+                    <div className="space-y-3 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-black text-emerald-700 uppercase tracking-wider flex items-center gap-2">
+                          <UserPlus size={14} className="text-emerald-500" /> Nomes dos Batizados
+                        </label>
+                        {loadingBaptisms && <Loader2 size={14} className="animate-spin text-emerald-400" />}
+                      </div>
+
+                      {editBaptismNames.length === 0 && !loadingBaptisms && (
+                        <p className="text-[10px] text-emerald-500 italic">Nenhum nome registrado ainda. Adicione abaixo.</p>
+                      )}
+
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {editBaptismNames.map((name, index) => (
+                          <div key={index} className="flex items-center gap-2">
+                            <span className="text-xs font-black text-emerald-400 w-5 text-center shrink-0">{index + 1}</span>
+                            <input
+                              type="text"
+                              value={name}
+                              onChange={e => updateBaptismName(index, e.target.value)}
+                              placeholder="Nome completo"
+                              className="flex-1 rounded-xl border-2 border-emerald-200 bg-white px-3 py-2.5 text-sm font-bold text-emerald-800 outline-none focus:border-emerald-400 transition-all placeholder:text-emerald-300"
+                            />
+                            {editBaptismNames.length > 1 && (
+                              <button type="button" onClick={() => removeBaptismName(index)}
+                                className="p-1.5 rounded-lg text-rose-400 hover:bg-rose-50 hover:text-rose-600 transition-all shrink-0">
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      <button type="button" onClick={addBaptismName}
+                        className="flex items-center gap-2 text-emerald-600 font-bold text-xs hover:text-emerald-800 transition-colors px-1 py-1">
+                        <Plus size={14} /> Adicionar nome
+                      </button>
+                    </div>
+                  )}
+
                   {editError && (
                     <div className="flex items-start gap-3 p-4 bg-rose-50 border border-rose-100 rounded-2xl animate-in fade-in slide-in-from-top-2">
                       <AlertCircle size={18} className="text-rose-500 shrink-0 mt-0.5" />
@@ -785,7 +855,7 @@ export default function HistoricoPage() {
                     <button onClick={handleUpdate} disabled={actionLoading}
                       className="w-full bg-sky-600 hover:bg-sky-700 text-white font-black py-4 rounded-2xl shadow-lg shadow-sky-200 transition-all flex items-center justify-center gap-2 disabled:opacity-70">
                       {actionLoading ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
-                      ATUALIZAR DADOS
+                      {editingRow && isBaptismRow(editingRow) ? 'SALVAR NOMES E VALOR' : 'ATUALIZAR DADOS'}
                     </button>
                     <button onClick={() => { setShowDeleteConfirm(true); setEditError(null) }}
                       className="w-full py-3 text-rose-500 text-xs font-black uppercase tracking-widest hover:bg-rose-50 rounded-2xl transition-all">
@@ -801,7 +871,8 @@ export default function HistoricoPage() {
                   <div>
                     <h3 className="text-xl font-black text-slate-800">Confirmar Exclusão?</h3>
                     <p className="text-slate-500 text-sm mt-2">
-                      Esta ação é permanente e removerá este lançamento de todos os relatórios e indicadores.
+                      Esta ação é permanente e removerá este lançamento
+                      {editingRow && isBaptismRow(editingRow) ? ' e todos os nomes associados' : ''} de todos os relatórios.
                     </p>
                   </div>
 
@@ -814,9 +885,7 @@ export default function HistoricoPage() {
 
                   <div className="flex flex-col sm:flex-row gap-3">
                     <button onClick={() => setShowDeleteConfirm(false)}
-                      className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-all">
-                      VOLTAR
-                    </button>
+                      className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-all">VOLTAR</button>
                     <button onClick={handleDelete} disabled={actionLoading}
                       className="flex-1 py-4 bg-rose-500 text-white font-bold rounded-2xl hover:bg-rose-600 transition-all shadow-lg shadow-rose-200 disabled:opacity-70">
                       {actionLoading ? 'EXCLUINDO...' : 'SIM, EXCLUIR'}
