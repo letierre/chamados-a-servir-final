@@ -6,7 +6,7 @@ import { createClient } from '../../lib/supabase/client'
 import {
   Building2, Target, Calendar, Hash, Save, Loader2,
   AlertCircle, CheckCircle2, History, Clock, ExternalLink,
-  Users, X, BookOpen
+  Users, X, BookOpen, Plus, Trash2, UserPlus, ClipboardCheck
 } from 'lucide-react'
 
 // ═══════════════════════════════════════
@@ -24,7 +24,6 @@ const THEME = {
 // MAPEAMENTO DE LINKS DA IGREJA
 // ═══════════════════════════════════════
 
-// Mapa: ward.name → unitNumber (para montar URLs dinamicamente)
 const WARD_UNITS: Record<string, string> = {
   'Ala Cachoeira do Sul': '60208',
   'Ala Lajeado': '82252',
@@ -36,7 +35,6 @@ const WARD_UNITS: Record<string, string> = {
   'Ramo Estrela': '1547771',
 }
 
-// Mapa: ward.name → orgId (para jejum/doações)
 const WARD_ORG_IDS: Record<string, string> = {
   'Ala Cachoeira do Sul': '1467',
   'Ala Lajeado': '29016',
@@ -48,10 +46,7 @@ const WARD_ORG_IDS: Record<string, string> = {
   'Ramo Estrela': '4010323',
 }
 
-// Mapa: slug do indicador → function que gera a URL dado o wardName
 type LinkBuilder = (wardName: string) => string | null
-
-// Substitua o bloco INDICATOR_LINKS inteiro por este:
 
 const INDICATOR_LINKS: Record<string, LinkBuilder> = {
   frequencia_sacramental: (w) => {
@@ -66,7 +61,6 @@ const INDICATOR_LINKS: Record<string, LinkBuilder> = {
     const unit = WARD_UNITS[w]
     return unit ? `https://bl.churchofjesuschrist.org/bp/pt/#/indicate-activity/297490/${unit}` : null
   },
-  // ✅ CORRIGIDO: era "membros_retornando"
   membros_retornando_a_igreja: (w) => {
     const unit = WARD_UNITS[w]
     return unit ? `https://lcr.churchofjesuschrist.org/one-work/progress-record?lang=por&unitNumber=${unit}&tab=returningMembers` : null
@@ -83,13 +77,11 @@ const INDICATOR_LINKS: Record<string, LinkBuilder> = {
     const unit = WARD_UNITS[w]
     return unit ? `https://lcr.churchofjesuschrist.org/one-work/progress-record?lang=por&unitNumber=${unit}&tab=recentConverts` : null
   },
-  // ✅ CORRIGIDO: era "missionarios_servindo"
   missionario_servindo_missao_do_brasil: (_w) => {
     return 'https://missionaryrecommendations.churchofjesuschrist.org/recommendations/home/candidates?vctype=ft'
   },
 }
 
-// Slugs que compartilham o mesmo link (Recomendações)
 const RECOMENDACAO_SLUGS = ['recomendacao_templo_com_investidura', 'recomendacao_templo_sem_investidura']
 
 // ═══════════════════════════════════════
@@ -103,6 +95,30 @@ type RecentEntry = {
   wards: { name: string }; indicators: { display_name: string }
 }
 type Toast = { type: 'success' | 'error'; text: string } | null
+
+// Tipo para o painel de controle
+type WeeklyStatusRow = {
+  ward_id: string; ward_name: string
+  indicator_id: string; indicator_name: string; indicator_slug: string
+  order_index: number; launched: boolean; value: number
+}
+
+// ═══════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════
+
+/** Retorna os últimos N domingos (incluindo hoje se for domingo) */
+function getRecentSundays(count: number): string[] {
+  const sundays: string[] = []
+  const d = new Date()
+  // Ir para o domingo mais recente
+  d.setDate(d.getDate() - d.getDay())
+  for (let i = 0; i < count; i++) {
+    sundays.push(d.toISOString().split('T')[0])
+    d.setDate(d.getDate() - 7)
+  }
+  return sundays
+}
 
 // ═══════════════════════════════════════
 // VALIDAÇÃO
@@ -167,6 +183,15 @@ export default function LancamentosPage() {
   // Campo extra: Membros Participantes (membership_count)
   const [membershipCount, setMembershipCount] = useState('')
 
+  // ─── NOVO: Batismos nominais ───
+  const [baptismNames, setBaptismNames] = useState<string[]>([''])
+
+  // ─── NOVO: Painel de controle ───
+  const [controlSunday, setControlSunday] = useState(() => getRecentSundays(1)[0])
+  const [weeklyStatus, setWeeklyStatus] = useState<WeeklyStatusRow[]>([])
+  const [loadingStatus, setLoadingStatus] = useState(false)
+  const availableSundays = getRecentSundays(8)
+
   // UI
   const [loadingData, setLoadingData] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -179,10 +204,9 @@ export default function LancamentosPage() {
   const selectedIndicator = indicators.find(i => i.id === indicatorId)
   const selectedSlug = selectedIndicator?.slug || ''
 
-  // É o caso especial de Recomendações? (mostra 2 campos)
   const isRecomendacao = selectedSlug === 'recomendacao_templo_com_investidura'
-  // É Membros Participantes? (mostra campo de membership)
   const isMembrosParticipantes = selectedSlug === 'membros_participantes'
+  const isBatismo = selectedSlug === 'batismo_converso'
 
   // ─── Gerar URL do link rápido ───
   const quickLink = selectedWard && selectedSlug
@@ -203,10 +227,46 @@ export default function LancamentosPage() {
     setFormError(null)
     setValueRecomSem('')
     setMembershipCount('')
+    setBaptismNames([''])
     if (selectedWard && isMembrosParticipantes) {
       setMembershipCount(String(selectedWard.membership_count || ''))
     }
   }, [wardId, indicatorId])
+
+  // ─── NOVO: Carregar nomes de batismo existentes quando muda ala+domingo ───
+  useEffect(() => {
+    async function loadExistingBaptisms() {
+      if (!isBatismo || !wardId || !weekStart) return
+      const { data } = await supabase.rpc('get_baptism_names', {
+        p_ward_id: wardId,
+        p_week_start: weekStart,
+      })
+      if (data && data.length > 0) {
+        setBaptismNames(data.map((d: any) => d.person_name))
+      }
+    }
+    loadExistingBaptisms()
+  }, [isBatismo, wardId, weekStart, supabase])
+
+  // ─── NOVO: Carregar status semanal ───
+  const loadWeeklyStatus = useCallback(async () => {
+    if (!controlSunday) return
+    setLoadingStatus(true)
+    try {
+      const { data } = await supabase.rpc('get_weekly_status', {
+        p_week_start: controlSunday,
+      })
+      if (data) setWeeklyStatus(data)
+    } finally {
+      setLoadingStatus(false)
+    }
+  }, [supabase, controlSunday])
+
+  useEffect(() => {
+    if (wards.length > 0 && indicators.length > 0) {
+      loadWeeklyStatus()
+    }
+  }, [loadWeeklyStatus, wards, indicators])
 
   // ─── Carregar dados iniciais ───
   const fetchRecentEntries = useCallback(async () => {
@@ -238,6 +298,19 @@ export default function LancamentosPage() {
     load()
   }, [router, supabase, fetchRecentEntries])
 
+  // ─── Helpers batismos ───
+  function addBaptismName() {
+    setBaptismNames(prev => [...prev, ''])
+  }
+
+  function removeBaptismName(index: number) {
+    setBaptismNames(prev => prev.filter((_, i) => i !== index))
+  }
+
+  function updateBaptismName(index: number, name: string) {
+    setBaptismNames(prev => prev.map((n, i) => i === index ? name : n))
+  }
+
   // ─── Submit ───
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -245,7 +318,78 @@ export default function LancamentosPage() {
     setSubmitting(true)
 
     try {
-      // Validações básicas
+      const { data: session } = await supabase.auth.getSession()
+      const userId = session.session?.user?.id
+
+      // ─── CASO BATISMO NOMINAL ───
+      if (isBatismo) {
+        if (!wardId || !weekStart) {
+          setFormError('Selecione ala e data.')
+          return
+        }
+        // Validar data
+        const dateErr = validateForm(0, weekStart)
+        if (dateErr && dateErr !== 'Valor deve ser positivo.') { setFormError(dateErr); return }
+
+        // Filtrar nomes vazios
+        const validNames = baptismNames.map(n => n.trim()).filter(n => n.length >= 2)
+        if (validNames.length === 0) {
+          setFormError('Adicione pelo menos um nome (mínimo 2 caracteres).')
+          return
+        }
+
+        // Deletar registros antigos dessa ala+semana e reinserir
+        await supabase
+          .from('baptism_records')
+          .delete()
+          .eq('ward_id', wardId)
+          .eq('week_start', weekStart)
+
+        // Inserir nomes
+        const { error: bErr } = await supabase.from('baptism_records').insert(
+          validNames.map(name => ({
+            ward_id: wardId,
+            week_start: weekStart,
+            person_name: name,
+            created_by: userId,
+          }))
+        )
+        if (bErr) {
+          setFormError('Erro ao salvar nomes: ' + bErr.message)
+          return
+        }
+
+        // Upsert o valor numérico (count) em weekly_indicator_data
+        // Primeiro tenta deletar existente, depois insere
+        await supabase
+          .from('weekly_indicator_data')
+          .delete()
+          .eq('ward_id', wardId)
+          .eq('indicator_id', indicatorId)
+          .eq('week_start', weekStart)
+
+        const { error: wErr } = await supabase.from('weekly_indicator_data').insert({
+          ward_id: wardId,
+          indicator_id: indicatorId,
+          value: validNames.length,
+          week_start: weekStart,
+          source: 'manual',
+          created_by: userId,
+        })
+
+        if (wErr) {
+          setFormError('Erro ao salvar contagem: ' + wErr.message)
+          return
+        }
+
+        setToast({ type: 'success', text: `${validNames.length} batismo(s) registrado(s)!` })
+        setBaptismNames([''])
+        await fetchRecentEntries()
+        await loadWeeklyStatus()
+        return
+      }
+
+      // ─── CASO PADRÃO (não-batismo) ───
       if (!wardId || !indicatorId || !value || !weekStart) {
         setFormError('Preencha todos os campos.')
         return
@@ -255,16 +399,12 @@ export default function LancamentosPage() {
       const err = validateForm(numValue, weekStart)
       if (err) { setFormError(err); return }
 
-      // Validação extra para Recomendações
       if (isRecomendacao && !valueRecomSem) {
         setFormError('Preencha o valor de membros SEM investidura também.')
         return
       }
 
-      const { data: session } = await supabase.auth.getSession()
-      const userId = session.session?.user?.id
-
-      // ─── Insert principal ───
+      // Insert principal
       const { error } = await supabase.from('weekly_indicator_data').insert({
         ward_id: wardId,
         indicator_id: indicatorId,
@@ -287,7 +427,7 @@ export default function LancamentosPage() {
 
       let extraSuccess = ''
 
-      // ─── Insert extra: Recomendações SEM investidura ───
+      // Insert extra: Recomendações SEM investidura
       if (isRecomendacao) {
         const semInvIndicator = indicators.find(i => i.slug === 'recomendacao_templo_sem_investidura')
         if (semInvIndicator) {
@@ -316,7 +456,7 @@ export default function LancamentosPage() {
         }
       }
 
-      // ─── Update extra: membership_count ───
+      // Update extra: membership_count
       if (isMembrosParticipantes && membershipCount) {
         const numMembership = Number(membershipCount)
         if (numMembership > 0 && numMembership <= 10000) {
@@ -332,6 +472,7 @@ export default function LancamentosPage() {
       setValueRecomSem('')
       setMembershipCount('')
       await fetchRecentEntries()
+      await loadWeeklyStatus()
 
     } catch (err: any) {
       setFormError('Erro inesperado: ' + (err.message || 'Tente novamente.'))
@@ -353,14 +494,33 @@ export default function LancamentosPage() {
   // RENDER
   // ═══════════════════════════════════════
 
-  // Filtrar indicadores no select: esconder "sem investidura" pois é tratado junto com "com investidura"
   const visibleIndicators = indicators.filter(i => i.slug !== 'recomendacao_templo_sem_investidura')
+
+  // ─── Dados do painel de controle ───
+  const statusWards = [...new Map(weeklyStatus.map(r => [r.ward_id, r.ward_name])).entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  const statusIndicators = [...new Map(weeklyStatus.map(r => [r.indicator_id, { name: r.indicator_name, slug: r.indicator_slug, order: r.order_index }])).entries()]
+    .map(([id, info]) => ({ id, ...info }))
+    .sort((a, b) => a.order - b.order)
+
+  const statusMap = new Map(weeklyStatus.map(r => [`${r.ward_id}-${r.indicator_id}`, r]))
+
+  const totalCells = statusWards.length * statusIndicators.length
+  const launchedCells = weeklyStatus.filter(r => r.launched).length
+  const completionPct = totalCells > 0 ? Math.round((launchedCells / totalCells) * 100) : 0
+
+  // Contagem de alas 100% completas
+  const wardsComplete = statusWards.filter(w =>
+    statusIndicators.every(ind => statusMap.get(`${w.id}-${ind.id}`)?.launched)
+  ).length
 
   return (
     <main className="min-h-screen p-4 md:p-12 font-sans transition-all" style={{ backgroundColor: THEME.bg }}>
       <ToastMessage toast={toast} onClose={() => setToast(null)} />
 
-      <div className="mx-auto max-w-3xl">
+      <div className="mx-auto max-w-5xl">
 
         {/* HEADER */}
         <div className="mb-8 md:mb-10 text-center md:text-left">
@@ -374,7 +534,118 @@ export default function LancamentosPage() {
 
         <div className="grid grid-cols-1 gap-6 md:gap-8">
 
-          {/* ═══ FORMULÁRIO ═══ */}
+          {/* ═══════════════════════════════════════ */}
+          {/* PAINEL DE CONTROLE SEMANAL             */}
+          {/* ═══════════════════════════════════════ */}
+          <div className="bg-white rounded-[1.5rem] md:rounded-[2rem] shadow-xl border border-slate-200 overflow-hidden">
+            <div className="p-5 md:p-8 border-b border-slate-100 flex flex-col md:flex-row items-center justify-between bg-slate-50/50 gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-emerald-50 rounded-xl">
+                  <ClipboardCheck size={20} className="text-emerald-600" />
+                </div>
+                <div>
+                  <h2 className="font-black text-slate-800 text-base md:text-lg">Controle Semanal</h2>
+                  <p className="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-wider">
+                    {wardsComplete} de {statusWards.length} alas completas — {completionPct}%
+                  </p>
+                </div>
+              </div>
+
+              <select
+                value={controlSunday}
+                onChange={e => setControlSunday(e.target.value)}
+                className="bg-white border-2 border-slate-100 text-slate-700 text-sm rounded-xl focus:ring-sky-500 focus:border-sky-500 p-2.5 font-bold"
+              >
+                {availableSundays.map(s => (
+                  <option key={s} value={s}>
+                    {new Date(s + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}
+                    {s === availableSundays[0] ? ' (mais recente)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Barra de progresso */}
+            <div className="px-5 md:px-8 pt-4">
+              <div className="w-full bg-slate-100 rounded-full h-2.5">
+                <div
+                  className={`h-2.5 rounded-full transition-all duration-500 ${completionPct === 100 ? 'bg-emerald-500' : 'bg-sky-500'}`}
+                  style={{ width: `${completionPct}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Tabela de status */}
+            <div className="p-3 md:p-6 overflow-x-auto">
+              {loadingStatus ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-slate-300" />
+                </div>
+              ) : statusWards.length === 0 ? (
+                <p className="text-center py-8 text-slate-400 text-sm font-medium">Nenhum dado encontrado.</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100">
+                      <th className="text-left p-2 md:p-3 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider sticky left-0 bg-white z-10 min-w-[100px]">
+                        Unidade
+                      </th>
+                      {statusIndicators.map(ind => (
+                        <th key={ind.id} className="text-center p-1 md:p-2 text-[8px] md:text-[9px] font-black text-slate-400 uppercase max-w-[60px] md:max-w-[80px]">
+                          <span className="block truncate">{ind.name.replace('Recomendações para o Templo - Membros ', 'Rec. ').replace('Frequência da Reunião Sacramental', 'Freq. Sacr.').replace('Membros Retornando à Igreja', 'Retorn.').replace('Membros Participantes', 'Particip.').replace('Membros Jejuando', 'Jejum').replace('Batismos de Conversos', 'Batismos').replace('Missionários Servindo do Brasil', 'Mission.')}</span>
+                        </th>
+                      ))}
+                      <th className="text-center p-2 text-[9px] font-black text-slate-400 uppercase">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {statusWards.map(ward => {
+                      const wardIndicators = statusIndicators.map(ind => statusMap.get(`${ward.id}-${ind.id}`))
+                      const wardDone = wardIndicators.every(r => r?.launched)
+                      const wardCount = wardIndicators.filter(r => r?.launched).length
+                      return (
+                        <tr key={ward.id} className={wardDone ? 'bg-emerald-50/30' : 'hover:bg-slate-50/50'}>
+                          <td className="p-2 md:p-3 sticky left-0 bg-white z-10">
+                            <span className="font-bold text-slate-700 text-xs md:text-sm">{ward.name}</span>
+                          </td>
+                          {statusIndicators.map(ind => {
+                            const cell = statusMap.get(`${ward.id}-${ind.id}`)
+                            return (
+                              <td key={ind.id} className="text-center p-1 md:p-2">
+                                {cell?.launched ? (
+                                  <div className="flex flex-col items-center">
+                                    <CheckCircle2 size={16} className="text-emerald-500" />
+                                    <span className="text-[9px] font-bold text-emerald-600 mt-0.5">{cell.value}</span>
+                                  </div>
+                                ) : (
+                                  <div className="w-4 h-4 mx-auto rounded-full border-2 border-slate-200" />
+                                )}
+                              </td>
+                            )
+                          })}
+                          <td className="text-center p-2">
+                            {wardDone ? (
+                              <span className="inline-block px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[9px] font-black rounded-full uppercase">
+                                Completo
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold text-slate-400">
+                                {wardCount}/{statusIndicators.length}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+
+          {/* ═══════════════════════════════════════ */}
+          {/* FORMULÁRIO                              */}
+          {/* ═══════════════════════════════════════ */}
           <div className="bg-white rounded-[1.5rem] md:rounded-[2rem] shadow-xl border border-slate-200 overflow-hidden relative">
             <div className="h-2 w-full absolute top-0 left-0" style={{ backgroundColor: THEME.primary }}></div>
 
@@ -438,8 +709,8 @@ export default function LancamentosPage() {
                   </div>
                 )}
 
-                {/* Data + Valor */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6 pt-2">
+                {/* Data (sempre visível) */}
+                <div className={`grid grid-cols-1 ${isBatismo ? '' : 'md:grid-cols-2'} gap-5 md:gap-6 pt-2`}>
                   <div className="space-y-2 md:space-y-3">
                     <label className="text-xs font-black text-slate-500 uppercase tracking-wider flex items-center gap-2">
                       <Calendar size={16} className="text-slate-400" /> Domingo de Referência
@@ -448,16 +719,62 @@ export default function LancamentosPage() {
                       className="w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 text-slate-800 font-bold outline-none focus:border-[#0069a8] focus:bg-white transition-all text-sm md:text-base" />
                   </div>
 
-                  <div className="space-y-2 md:space-y-3">
-                    <label className="text-xs font-black text-slate-500 uppercase tracking-wider flex items-center gap-2">
-                      <Hash size={16} className="text-slate-400" />
-                      {isRecomendacao ? 'COM Investidura' : 'Valor Realizado'}
-                    </label>
-                    <input type="number" value={value} onChange={e => { setValue(e.target.value); setFormError(null) }} required min={0} max={10000}
-                      className="w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 text-xl md:text-2xl font-black text-[#0069a8] outline-none focus:border-[#0069a8] focus:bg-white transition-all placeholder:text-slate-300"
-                      placeholder="0" />
-                  </div>
+                  {/* Valor numérico (NÃO aparece para batismo) */}
+                  {!isBatismo && (
+                    <div className="space-y-2 md:space-y-3">
+                      <label className="text-xs font-black text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                        <Hash size={16} className="text-slate-400" />
+                        {isRecomendacao ? 'COM Investidura' : 'Valor Realizado'}
+                      </label>
+                      <input type="number" value={value} onChange={e => { setValue(e.target.value); setFormError(null) }} required min={0} max={10000}
+                        className="w-full rounded-xl border-2 border-slate-100 bg-slate-50 px-4 py-3.5 text-xl md:text-2xl font-black text-[#0069a8] outline-none focus:border-[#0069a8] focus:bg-white transition-all placeholder:text-slate-300"
+                        placeholder="0" />
+                    </div>
+                  )}
                 </div>
+
+                {/* ─── BATISMOS NOMINAIS ─── */}
+                {isBatismo && (
+                  <div className="animate-in fade-in slide-in-from-top-2 space-y-4 p-5 bg-emerald-50 border border-emerald-100 rounded-2xl">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-black text-emerald-700 uppercase tracking-wider flex items-center gap-2">
+                        <UserPlus size={16} className="text-emerald-500" /> Nomes dos Batizados
+                      </label>
+                      <span className="text-[10px] font-bold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full">
+                        {baptismNames.filter(n => n.trim().length >= 2).length} pessoa(s)
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-emerald-600 -mt-2">
+                      Adicione cada nome. A contagem será feita automaticamente.
+                    </p>
+
+                    <div className="space-y-2">
+                      {baptismNames.map((name, index) => (
+                        <div key={index} className="flex items-center gap-2">
+                          <span className="text-xs font-black text-emerald-400 w-6 text-center shrink-0">{index + 1}</span>
+                          <input
+                            type="text"
+                            value={name}
+                            onChange={e => updateBaptismName(index, e.target.value)}
+                            placeholder="Nome completo"
+                            className="flex-1 rounded-xl border-2 border-emerald-200 bg-white px-4 py-3 text-sm font-bold text-emerald-800 outline-none focus:border-emerald-400 transition-all placeholder:text-emerald-300"
+                          />
+                          {baptismNames.length > 1 && (
+                            <button type="button" onClick={() => removeBaptismName(index)}
+                              className="p-2 rounded-lg text-rose-400 hover:bg-rose-50 hover:text-rose-600 transition-all shrink-0">
+                              <Trash2 size={16} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    <button type="button" onClick={addBaptismName}
+                      className="flex items-center gap-2 text-emerald-600 font-bold text-xs hover:text-emerald-800 transition-colors px-2 py-1.5">
+                      <Plus size={16} /> Adicionar mais um nome
+                    </button>
+                  </div>
+                )}
 
                 {/* Campo extra: Recomendações SEM investidura */}
                 {isRecomendacao && (
@@ -503,7 +820,8 @@ export default function LancamentosPage() {
                   {submitting ? <Loader2 className="h-6 w-6 animate-spin" /> : (
                     <>
                       <Save size={20} />
-                      {isRecomendacao ? 'Salvar Ambos Indicadores' : 'Salvar Lançamento'}
+                      {isBatismo ? `Salvar ${baptismNames.filter(n => n.trim().length >= 2).length} Batismo(s)` :
+                       isRecomendacao ? 'Salvar Ambos Indicadores' : 'Salvar Lançamento'}
                     </>
                   )}
                 </button>
@@ -566,7 +884,7 @@ export default function LancamentosPage() {
 
         {/* Footer */}
         <p className="text-center text-[10px] text-slate-300 font-bold mt-8 uppercase tracking-widest">
-          Chamados a Servir — v1.6.0
+          Chamados a Servir — v1.5.0
         </p>
       </div>
     </main>
