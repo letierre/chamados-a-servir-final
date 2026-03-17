@@ -640,10 +640,14 @@ export default function LancamentosPage() {
   const statusIndicators = [...new Map(weeklyStatus.map(r => [r.indicator_id, { name: r.indicator_name, slug: r.indicator_slug, order: r.order_index }])).entries()]
     .map(([id, info]) => ({ id, ...info })).sort((a, b) => a.order - b.order)
 
-  const statusMap = new Map(weeklyStatus.map(r => [`${r.ward_id}-${r.indicator_id}`, r]))
+  // Normalizar tipos (RPC pode retornar strings em vez de boolean/number)
+  const statusMap = new Map(weeklyStatus.map(r => [
+    `${r.ward_id}-${r.indicator_id}`,
+    { ...r, launched: String(r.launched) === 'true', reviewed: String(r.reviewed) === 'true', value: Number(r.value) }
+  ]))
 
   const totalCells = statusWards.length * statusIndicators.length
-  const doneCells = weeklyStatus.filter(r => r.launched || r.reviewed).length
+  const doneCells = [...statusMap.values()].filter(r => r.launched || r.reviewed).length
   const completionPct = totalCells > 0 ? Math.round((doneCells / totalCells) * 100) : 0
   const wardsComplete = statusWards.filter(w =>
     statusIndicators.every(ind => {
