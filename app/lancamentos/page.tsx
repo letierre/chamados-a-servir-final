@@ -7,7 +7,7 @@ import {
   Building2, Target, Calendar, Hash, Save, Loader2,
   AlertCircle, CheckCircle2, History, Clock, ExternalLink,
   Users, X, BookOpen, Plus, Trash2, UserPlus, ClipboardCheck,
-  Eye, CalendarCheck
+  Eye, CalendarCheck, CalendarX2
 } from 'lucide-react'
 
 // ═══════════════════════════════════════
@@ -104,6 +104,11 @@ type WeeklyStatusRow = {
   ward_id: string; ward_name: string
   indicator_id: string; indicator_name: string; indicator_slug: string
   order_index: number; launched: boolean; reviewed: boolean; value: number
+}
+
+// Tipo para domingos sem reunião
+type SkipWeek = {
+  id: string; week_date: string; reason: string; description: string; affects_slug: string
 }
 
 // Tipo para pessoa nominal (batismo/retornando)
@@ -217,6 +222,9 @@ export default function LancamentosPage() {
   const [reviewingCell, setReviewingCell] = useState<string | null>(null)
   const availableSundays = getRecentSundays(12)
 
+  // Domingos sem reunião (conferências)
+  const [skipWeeks, setSkipWeeks] = useState<SkipWeek[]>([])
+
   // UI
   const [loadingData, setLoadingData] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -235,6 +243,19 @@ export default function LancamentosPage() {
   const isRetornando = selectedSlug === 'membros_retornando_a_igreja'
   const isMissionario = selectedSlug === 'missionario_servindo_missao_do_brasil'
   const isNominal = isBatismo || isRetornando || isMissionario
+
+  // ─── Skip weeks helpers ───
+  const isSkipWeek = (date: string, slug?: string) =>
+    skipWeeks.some(sw => sw.week_date === date && (slug ? sw.affects_slug === slug : true))
+
+  const getSkipReason = (date: string) =>
+    skipWeeks.find(sw => sw.week_date === date)
+
+  // O domingo selecionado no form é conferência para frequência?
+  const isFormDateSkipped = weekStart && selectedSlug === 'frequencia_sacramental' && isSkipWeek(weekStart, 'frequencia_sacramental')
+
+  // O domingo do controle semanal é conferência?
+  const controlSkip = getSkipReason(controlSunday)
 
   // ─── Quick Link ───
   const quickLink = selectedWard && selectedSlug
@@ -339,12 +360,14 @@ export default function LancamentosPage() {
       try {
         const { data: session } = await supabase.auth.getSession()
         if (!session.session) { router.push('/login'); return }
-        const [wRes, iRes] = await Promise.all([
+        const [wRes, iRes, swRes] = await Promise.all([
           supabase.from('wards').select('id, name, membership_count').eq('active', true).order('name'),
           supabase.from('indicators').select('id, display_name, slug, indicator_type').eq('active', true).order('order_index'),
+          supabase.from('skip_weeks').select('id, week_date, reason, description, affects_slug').order('week_date'),
         ])
         if (wRes.data) setWards(wRes.data)
         if (iRes.data) setIndicators(iRes.data)
+        if (swRes.data) setSkipWeeks(swRes.data)
         await fetchRecentEntries()
       } finally {
         setLoadingData(false)
@@ -652,11 +675,15 @@ export default function LancamentosPage() {
 
   const totalCells = statusWards.length * statusIndicators.length
   const doneCells = [...statusMap.values()].filter(r => r.launched || r.reviewed).length
-  const completionPct = totalCells > 0 ? Math.round((doneCells / totalCells) * 100) : 0
+  // Contar células de conferência (skip) como "feitas"
+  const skippedCells = statusWards.length * statusIndicators.filter(ind => isSkipWeek(controlSunday, ind.slug)).length
+  const effectiveDone = doneCells + skippedCells
+  const effectiveTotal = totalCells
+  const completionPct = effectiveTotal > 0 ? Math.min(100, Math.round((effectiveDone / effectiveTotal) * 100)) : 0
   const wardsComplete = statusWards.filter(w =>
     statusIndicators.every(ind => {
       const cell = statusMap.get(`${w.id}-${ind.id}`)
-      return cell?.launched || cell?.reviewed
+      return cell?.launched || cell?.reviewed || isSkipWeek(controlSunday, ind.slug)
     })
   ).length
 
@@ -696,12 +723,16 @@ export default function LancamentosPage() {
               </div>
               <select value={controlSunday} onChange={e => setControlSunday(e.target.value)}
                 className="bg-white border-2 border-slate-100 text-slate-700 text-sm rounded-xl focus:ring-sky-500 focus:border-sky-500 p-2.5 font-bold">
-                {availableSundays.map(s => (
-                  <option key={s} value={s}>
-                    {new Date(s + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}
-                    {s === availableSundays[0] ? ' (mais recente)' : ''}
-                  </option>
-                ))}
+                {availableSundays.map(s => {
+                  const skip = getSkipReason(s)
+                  return (
+                    <option key={s} value={s}>
+                      {new Date(s + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}
+                      {s === availableSundays[0] ? ' (mais recente)' : ''}
+                      {skip ? ` ⚠ ${skip.reason === 'conferencia_geral' ? 'Conf. Geral' : skip.reason === 'conferencia_estaca' ? 'Conf. Estaca' : 'Sem reunião'}` : ''}
+                    </option>
+                  )
+                })}
               </select>
             </div>
 
@@ -718,7 +749,18 @@ export default function LancamentosPage() {
               <div className="flex items-center gap-1.5"><CheckCircle2 size={12} className="text-emerald-500" /> Lançado</div>
               <div className="flex items-center gap-1.5"><Eye size={12} className="text-sky-500" /> Revisado</div>
               <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-full border-2 border-slate-200" /> Pendente</div>
+              <div className="flex items-center gap-1.5"><CalendarX2 size={12} className="text-amber-500" /> Conferência</div>
             </div>
+
+            {/* Aviso conferência no controle */}
+            {controlSkip && (
+              <div className="mx-5 md:mx-8 mt-3 flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                <CalendarX2 size={16} className="text-amber-600 shrink-0" />
+                <p className="text-xs font-bold text-amber-700">
+                  {controlSkip.description || 'Domingo sem reunião sacramental'} — Frequência não precisa ser lançada
+                </p>
+              </div>
+            )}
 
             {/* Tabela */}
             <div className="p-3 md:p-6 overflow-x-auto">
@@ -753,10 +795,16 @@ export default function LancamentosPage() {
                             const cell = statusMap.get(`${ward.id}-${ind.id}`)
                             const cellKey = `${ward.id}-${ind.id}`
                             const isReviewing = reviewingCell === cellKey
+                            const isCellSkipped = isSkipWeek(controlSunday, ind.slug)
                             return (
                               <td key={ind.id} className="text-center p-1 md:p-2">
                                 {isReviewing ? (
                                   <Loader2 size={14} className="animate-spin text-slate-300 mx-auto" />
+                                ) : isCellSkipped && !cell?.launched ? (
+                                  <div className="flex flex-col items-center" title="Domingo de conferência — sem reunião">
+                                    <CalendarX2 size={14} className="text-amber-400" />
+                                    <span className="text-[7px] font-bold text-amber-400 mt-0.5">conf.</span>
+                                  </div>
                                 ) : cell?.launched ? (
                                   <div className="flex flex-col items-center">
                                     <CheckCircle2 size={16} className="text-emerald-500" />
@@ -852,6 +900,21 @@ export default function LancamentosPage() {
                       className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-sky-600 text-white text-xs font-bold rounded-xl hover:bg-sky-700 transition-all">
                       <ExternalLink size={14} /> Abrir
                     </button>
+                  </div>
+                )}
+
+                {/* ─── AVISO: Domingo de Conferência ─── */}
+                {isFormDateSkipped && (
+                  <div className="flex items-center gap-3 p-4 bg-amber-50 border border-amber-200 rounded-2xl animate-in fade-in slide-in-from-top-2">
+                    <CalendarX2 size={20} className="text-amber-600 shrink-0" />
+                    <div>
+                      <p className="text-sm font-bold text-amber-800">
+                        {getSkipReason(weekStart)?.description || 'Domingo sem reunião sacramental'}
+                      </p>
+                      <p className="text-[10px] text-amber-600 mt-0.5">
+                        A frequência sacramental não precisa ser lançada neste domingo. Este dia será excluído do cálculo de média.
+                      </p>
+                    </div>
                   </div>
                 )}
 
