@@ -231,6 +231,8 @@ export default function LancamentosPage() {
   const [toast, setToast] = useState<Toast>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [linkOpened, setLinkOpened] = useState(false)
+  const [showConfPopover, setShowConfPopover] = useState(false)
+  const [savingConf, setSavingConf] = useState(false)
 
   // Derivados
   const selectedWard = wards.find(w => w.id === wardId)
@@ -421,6 +423,48 @@ export default function LancamentosPage() {
       await loadWeeklyStatus()
     } finally {
       setReviewingCell(null)
+    }
+  }
+
+  // ─── Marcar domingo como conferência ───
+  async function handleSetConference(reason: 'conferencia_geral' | 'conferencia_estaca') {
+    setSavingConf(true)
+    try {
+      const desc = reason === 'conferencia_geral'
+        ? `Conferência Geral — ${new Date(controlSunday + 'T12:00:00').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}`
+        : `Conferência de Estaca — ${new Date(controlSunday + 'T12:00:00').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}`
+
+      await supabase.from('skip_weeks').upsert({
+        week_date: controlSunday,
+        reason,
+        description: desc,
+        affects_slug: 'frequencia_sacramental',
+      }, { onConflict: 'week_date' })
+
+      // Recarregar skip_weeks
+      const { data } = await supabase.from('skip_weeks').select('id, week_date, reason, description, affects_slug').order('week_date')
+      if (data) setSkipWeeks(data)
+
+      setToast({ type: 'success', text: `Domingo marcado como ${reason === 'conferencia_geral' ? 'Conferência Geral' : 'Conferência de Estaca'}.` })
+      setShowConfPopover(false)
+    } finally {
+      setSavingConf(false)
+    }
+  }
+
+  // ─── Desmarcar conferência ───
+  async function handleRemoveConference() {
+    setSavingConf(true)
+    try {
+      await supabase.from('skip_weeks').delete().eq('week_date', controlSunday)
+
+      const { data } = await supabase.from('skip_weeks').select('id, week_date, reason, description, affects_slug').order('week_date')
+      if (data) setSkipWeeks(data)
+
+      setToast({ type: 'success', text: 'Domingo desmarcado como conferência.' })
+      setShowConfPopover(false)
+    } finally {
+      setSavingConf(false)
     }
   }
 
@@ -734,6 +778,57 @@ export default function LancamentosPage() {
                   )
                 })}
               </select>
+
+              {/* Botão conferência */}
+              <div className="relative">
+                <button onClick={() => setShowConfPopover(!showConfPopover)}
+                  className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-bold rounded-xl border-2 transition-all ${
+                    controlSkip
+                      ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
+                      : 'bg-white border-slate-100 text-slate-500 hover:border-amber-200 hover:text-amber-600'
+                  }`}>
+                  <CalendarX2 size={14} />
+                  <span className="hidden sm:inline">{controlSkip ? 'Conferência' : 'Marcar Conf.'}</span>
+                </button>
+
+                {showConfPopover && (
+                  <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-2xl shadow-2xl border border-slate-200 p-4 z-50 animate-in slide-in-from-top-2">
+                    <p className="text-xs font-black text-slate-700 mb-3">
+                      {new Date(controlSunday + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}
+                    </p>
+
+                    {controlSkip ? (
+                      <div className="space-y-3">
+                        <div className="p-3 bg-amber-50 rounded-xl border border-amber-100">
+                          <p className="text-[10px] font-bold text-amber-700 uppercase">Marcado como</p>
+                          <p className="text-sm font-black text-amber-800 mt-0.5">{controlSkip.description}</p>
+                        </div>
+                        <button onClick={handleRemoveConference} disabled={savingConf}
+                          className="w-full py-2.5 text-rose-600 bg-rose-50 border border-rose-100 font-bold text-xs rounded-xl hover:bg-rose-100 transition-all disabled:opacity-50">
+                          {savingConf ? 'Removendo...' : 'Remover marcação'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <p className="text-[10px] text-slate-400 font-medium mb-2">Marcar este domingo como:</p>
+                        <button onClick={() => handleSetConference('conferencia_geral')} disabled={savingConf}
+                          className="w-full py-2.5 bg-amber-50 border border-amber-200 text-amber-800 font-bold text-xs rounded-xl hover:bg-amber-100 transition-all disabled:opacity-50 text-left px-3">
+                          🌍 Conferência Geral
+                        </button>
+                        <button onClick={() => handleSetConference('conferencia_estaca')} disabled={savingConf}
+                          className="w-full py-2.5 bg-sky-50 border border-sky-200 text-sky-800 font-bold text-xs rounded-xl hover:bg-sky-100 transition-all disabled:opacity-50 text-left px-3">
+                          🏛️ Conferência de Estaca
+                        </button>
+                      </div>
+                    )}
+
+                    <button onClick={() => setShowConfPopover(false)}
+                      className="w-full mt-3 py-2 text-slate-400 text-[10px] font-bold uppercase hover:text-slate-600 transition-colors">
+                      Fechar
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Barra de progresso */}
