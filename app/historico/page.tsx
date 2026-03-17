@@ -6,37 +6,32 @@ import {
   History, Calendar, Hash, Building2, Target, 
   ChevronLeft, ChevronRight, Clock, Loader2,
   X, Check, ChevronDown, Edit2, Save, AlertTriangle, Filter,
-  CheckCircle2, AlertCircle, Plus, Trash2, UserPlus
+  CheckCircle2, AlertCircle, Plus, Trash2, UserPlus, BookOpen, Users
 } from 'lucide-react'
 
 // ═══════════════════════════════════════
 // CONFIGURAÇÃO
 // ═══════════════════════════════════════
 
-const THEME = {
-  bg: '#f1f5f9',
-}
+const THEME = { bg: '#f1f5f9' }
+
+const NOMINAL_SLUGS = ['batismo_converso', 'membros_retornando_a_igreja', 'missionario_servindo_missao_do_brasil']
 
 // ═══════════════════════════════════════
 // TIPOS
 // ═══════════════════════════════════════
 
 type HistoryEntry = {
-  id: string
-  value: number
-  week_start: string
-  created_at: string
-  updated_at: string | null
+  id: string; value: number; week_start: string; created_at: string; updated_at: string | null
   wards: { id: string; name: string }
-  indicators: { id: string; display_name: string; slug?: string }
+  indicators: { id: string; display_name: string }
 }
 
 type DateRange = { start: string; end: string }
+type Toast = { type: 'success' | 'error'; text: string } | null
 
-type Toast = {
-  type: 'success' | 'error'
-  text: string
-} | null
+type NominalPerson = { name: string; birth_date: string; gender: string }
+type MissionaryPerson = { id?: string; name: string; gender: string; mission_start_date: string; mission_end_date: string; is_active?: boolean }
 
 // ═══════════════════════════════════════
 // HELPERS
@@ -46,14 +41,13 @@ function getWeekNumber(d: Date) {
   const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
   date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7))
   const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1))
-  const weekNo = Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7)
-  return { week: weekNo, year: date.getUTCFullYear() }
+  return { week: Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7), year: date.getUTCFullYear() }
 }
 
 function validateEditForm(value: number, weekStart: string): string | null {
   if (!weekStart) return 'Data é obrigatória.'
   if (isNaN(value) || value < 0) return 'Valor deve ser um número positivo.'
-  if (value > 10000) return 'Valor parece muito alto. Verifique.'
+  if (value > 10000) return 'Valor parece muito alto.'
   const today = new Date().toISOString().split('T')[0]
   if (weekStart > today) return 'Não é possível usar datas futuras.'
   const d = new Date(weekStart + 'T12:00:00')
@@ -78,7 +72,7 @@ function CheckboxItem({ label, checked, onClick }: { label: string; checked: boo
 
 function ToastMessage({ toast, onClose }: { toast: Toast; onClose: () => void }) {
   if (!toast) return null
-  useEffect(() => { const timer = setTimeout(onClose, 4000); return () => clearTimeout(timer) }, [toast, onClose])
+  useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t) }, [toast, onClose])
   return (
     <div className="fixed top-6 right-6 z-[200] animate-in slide-in-from-top-3 fade-in duration-300">
       <div className={`flex items-center gap-3 px-5 py-4 rounded-2xl shadow-2xl border ${
@@ -100,34 +94,27 @@ export default function HistoricoPage() {
   const supabase = createClient()
   const dropdownRef = useRef<HTMLDivElement>(null)
 
-  // Estado de dados
   const [data, setData] = useState<HistoryEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [totalCount, setTotalCount] = useState(0)
-
-  // Mapa de slugs dos indicadores (para identificar batismo)
   const [indicatorSlugs, setIndicatorSlugs] = useState<Record<string, string>>({})
 
-  // Opções de filtro
   const [filterOptions, setFilterOptions] = useState<{
     wards: { id: string; name: string }[]
     indicators: { id: string; display_name: string }[]
     weeks: { date: string; label: string }[]
   }>({ wards: [], indicators: [], weeks: [] })
 
-  // Filtros ativos
   const [selectedWards, setSelectedWards] = useState<string[]>([])
   const [selectedIndicators, setSelectedIndicators] = useState<string[]>([])
   const [selectedWeekDate, setSelectedWeekDate] = useState('')
   const [dateRange, setDateRange] = useState<DateRange>({ start: '', end: '' })
 
-  // UI
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null)
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(15)
 
-  // Modal de edição
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [editingRow, setEditingRow] = useState<HistoryEntry | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
@@ -135,32 +122,54 @@ export default function HistoricoPage() {
   const [editForm, setEditForm] = useState({ value: 0, week_start: '' })
   const [editError, setEditError] = useState<string | null>(null)
 
-  // ─── NOVO: Batismos nominais no modal ───
-  const [editBaptismNames, setEditBaptismNames] = useState<string[]>([])
-  const [loadingBaptisms, setLoadingBaptisms] = useState(false)
+  // Nominais no modal
+  const [editNominalPersons, setEditNominalPersons] = useState<NominalPerson[]>([])
+  const [editMissionaries, setEditMissionaries] = useState<MissionaryPerson[]>([])
+  const [loadingNominal, setLoadingNominal] = useState(false)
 
-  // Toast
   const [toast, setToast] = useState<Toast>(null)
 
-  // ─── Fechar dropdown ao clicar fora ───
+  // ─── Helpers ───
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (activeDropdown && dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setActiveDropdown(null)
-      }
+      if (activeDropdown && dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setActiveDropdown(null)
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [activeDropdown])
 
-  const toggleDropdown = (name: string) => {
-    setActiveDropdown(prev => (prev === name ? null : name))
-  }
-
-  // Reset página ao mudar filtros
+  const toggleDropdown = (name: string) => setActiveDropdown(prev => (prev === name ? null : name))
   useEffect(() => { setPage(1) }, [selectedWards, selectedIndicators, selectedWeekDate, dateRange, pageSize])
 
-  // ─── Carregar opções de filtro + slugs ───
+  function getSlug(row: HistoryEntry): string { return indicatorSlugs[row.indicators.id] || '' }
+  function isNominalRow(row: HistoryEntry): boolean { return NOMINAL_SLUGS.includes(getSlug(row)) }
+  function isBaptismRow(row: HistoryEntry): boolean { return getSlug(row) === 'batismo_converso' }
+  function isRetornandoRow(row: HistoryEntry): boolean { return getSlug(row) === 'membros_retornando_a_igreja' }
+  function isMissionarioRow(row: HistoryEntry): boolean { return getSlug(row) === 'missionario_servindo_missao_do_brasil' }
+
+  function getNominalLabel(row: HistoryEntry): { text: string; color: string } {
+    const slug = getSlug(row)
+    if (slug === 'batismo_converso') return { text: 'nominal', color: 'text-emerald-500' }
+    if (slug === 'membros_retornando_a_igreja') return { text: 'nominal', color: 'text-orange-500' }
+    if (slug === 'missionario_servindo_missao_do_brasil') return { text: 'nominal', color: 'text-indigo-500' }
+    return { text: '', color: '' }
+  }
+
+  // Nominal person helpers
+  function addNominalPerson() { setEditNominalPersons(prev => [...prev, { name: '', birth_date: '', gender: '' }]) }
+  function removeNominalPerson(i: number) { setEditNominalPersons(prev => prev.filter((_, idx) => idx !== i)) }
+  function updateNominalPerson(i: number, field: keyof NominalPerson, val: string) {
+    setEditNominalPersons(prev => prev.map((p, idx) => idx === i ? { ...p, [field]: val } : p))
+  }
+
+  // Missionary helpers
+  function addMissionary() { setEditMissionaries(prev => [...prev, { name: '', gender: '', mission_start_date: '', mission_end_date: '' }]) }
+  function removeMissionary(i: number) { setEditMissionaries(prev => prev.filter((_, idx) => idx !== i)) }
+  function updateMissionary(i: number, field: keyof MissionaryPerson, val: string) {
+    setEditMissionaries(prev => prev.map((p, idx) => idx === i ? { ...p, [field]: val } : p))
+  }
+
+  // ─── Carregar opções + slugs ───
   useEffect(() => {
     async function loadOptions() {
       const [w, i, weeksRes] = await Promise.all([
@@ -168,29 +177,21 @@ export default function HistoricoPage() {
         supabase.from('indicators').select('id, display_name, slug').eq('active', true).order('display_name'),
         supabase.rpc('get_distinct_weeks'),
       ])
-
-      // Guardar mapa de slugs
       if (i.data) {
         const slugMap: Record<string, string> = {}
         i.data.forEach((ind: any) => { slugMap[ind.id] = ind.slug })
         setIndicatorSlugs(slugMap)
       }
-
       let uniqueWeeks: { date: string; label: string }[] = []
-
       if (weeksRes.data) {
         uniqueWeeks = weeksRes.data.map((item: any) => {
           const { week, year } = getWeekNumber(new Date(item.week_start + 'T12:00:00'))
           return { date: item.week_start, label: `Semana ${week} (${year})` }
         })
       } else {
-        const { data: fallbackWeeks } = await supabase
-          .from('weekly_indicator_data')
-          .select('week_start')
-          .order('week_start', { ascending: false })
-
+        const { data: fb } = await supabase.from('weekly_indicator_data').select('week_start').order('week_start', { ascending: false })
         const seen = new Set<string>()
-        fallbackWeeks?.forEach(item => {
+        fb?.forEach(item => {
           if (!seen.has(item.week_start)) {
             seen.add(item.week_start)
             const { week, year } = getWeekNumber(new Date(item.week_start + 'T12:00:00'))
@@ -198,7 +199,6 @@ export default function HistoricoPage() {
           }
         })
       }
-
       setFilterOptions({ wards: w.data || [], indicators: (i.data || []).map((x: any) => ({ id: x.id, display_name: x.display_name })), weeks: uniqueWeeks })
     }
     loadOptions()
@@ -208,204 +208,165 @@ export default function HistoricoPage() {
   const fetchHistory = useCallback(async () => {
     setLoading(true)
     try {
-      let query = supabase
-        .from('weekly_indicator_data')
-        .select(
-          `id, value, week_start, created_at, updated_at, wards!inner(id, name), indicators!inner(id, display_name)`,
-          { count: 'exact' }
-        )
-
+      let query = supabase.from('weekly_indicator_data')
+        .select('id, value, week_start, created_at, updated_at, wards!inner(id, name), indicators!inner(id, display_name)', { count: 'exact' })
       if (selectedWards.length > 0) query = query.in('ward_id', selectedWards)
       if (selectedIndicators.length > 0) query = query.in('indicator_id', selectedIndicators)
       if (selectedWeekDate) query = query.eq('week_start', selectedWeekDate)
       if (dateRange.start) query = query.gte('created_at', `${dateRange.start}T00:00:00`)
       if (dateRange.end) query = query.lte('created_at', `${dateRange.end}T23:59:59`)
-
       const { data: res, count } = await query
-        .order('week_start', { ascending: false })
-        .order('created_at', { ascending: false })
+        .order('week_start', { ascending: false }).order('created_at', { ascending: false })
         .range((page - 1) * pageSize, page * pageSize - 1)
-
       setData((res as any) || [])
       setTotalCount(count || 0)
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }, [supabase, page, pageSize, selectedWards, selectedIndicators, selectedWeekDate, dateRange])
 
   useEffect(() => { fetchHistory() }, [fetchHistory])
 
-  // ─── Helpers batismo ───
-  function addBaptismName() { setEditBaptismNames(prev => [...prev, '']) }
-  function removeBaptismName(index: number) { setEditBaptismNames(prev => prev.filter((_, i) => i !== index)) }
-  function updateBaptismName(index: number, name: string) { setEditBaptismNames(prev => prev.map((n, i) => i === index ? name : n)) }
-
-  // ─── Verificar se é batismo ───
-  function isBaptismRow(row: HistoryEntry): boolean {
-    const slug = indicatorSlugs[row.indicators.id]
-    return slug === 'batismo_converso'
-  }
-
-  // ─── Carregar nomes de batismo ao abrir modal ───
-  async function loadBaptismNames(wardId: string, weekStart: string) {
-    setLoadingBaptisms(true)
+  // ─── Carregar dados nominais ao abrir modal ───
+  async function loadNominalData(row: HistoryEntry) {
+    setLoadingNominal(true)
+    const slug = getSlug(row)
     try {
-      const { data } = await supabase.rpc('get_baptism_names', {
-        p_ward_id: wardId,
-        p_week_start: weekStart,
-      })
-      if (data && data.length > 0) {
-        setEditBaptismNames(data.map((d: any) => d.person_name))
-      } else {
-        // Se não tem nomes mas tem valor, criar campos vazios
-        setEditBaptismNames([''])
+      if (slug === 'batismo_converso') {
+        const { data } = await supabase.rpc('get_baptism_names', { p_ward_id: row.wards.id, p_week_start: row.week_start })
+        if (data && data.length > 0) {
+          setEditNominalPersons(data.map((d: any) => ({ name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '' })))
+        } else { setEditNominalPersons([{ name: '', birth_date: '', gender: '' }]) }
+      } else if (slug === 'membros_retornando_a_igreja') {
+        const { data } = await supabase.rpc('get_returning_names', { p_ward_id: row.wards.id, p_week_start: row.week_start })
+        if (data && data.length > 0) {
+          setEditNominalPersons(data.map((d: any) => ({ name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '' })))
+        } else { setEditNominalPersons([{ name: '', birth_date: '', gender: '' }]) }
+      } else if (slug === 'missionario_servindo_missao_do_brasil') {
+        const { data } = await supabase.rpc('get_missionary_names', { p_ward_id: row.wards.id })
+        if (data && data.length > 0) {
+          setEditMissionaries(data.map((d: any) => ({
+            id: d.id, name: d.person_name, gender: d.gender || '',
+            mission_start_date: d.mission_start_date || '', mission_end_date: d.mission_end_date || '',
+            is_active: d.is_active,
+          })))
+        } else { setEditMissionaries([]) }
       }
-    } catch {
-      setEditBaptismNames([''])
-    } finally {
-      setLoadingBaptisms(false)
-    }
+    } catch { /* fallback empty */ }
+    finally { setLoadingNominal(false) }
   }
 
-  // ─── Ações do Modal ───
+  // ─── Modal: Update ───
   const handleUpdate = async () => {
     if (!editingRow) return
-    const isBaptism = isBaptismRow(editingRow)
+    const slug = getSlug(editingRow)
+    setEditError(null)
+    setActionLoading(true)
 
-    // ─── CASO BATISMO ───
-    if (isBaptism) {
-      const validNames = editBaptismNames.map(n => n.trim()).filter(n => n.length >= 2)
-      const newValue = validNames.length
+    try {
+      const { data: session } = await supabase.auth.getSession()
+      const userId = session.session?.user?.id
 
-      if (newValue === 0 && editForm.value === 0) {
-        // Permite salvar zero (sem nomes)
-      } else if (newValue === 0 && editForm.value > 0) {
-        // Tem valor numérico mas sem nomes — OK, salvar só o valor
-      }
+      // ─── BATISMO / RETORNANDO ───
+      if (slug === 'batismo_converso' || slug === 'membros_retornando_a_igreja') {
+        const table = slug === 'batismo_converso' ? 'baptism_records' : 'returning_member_records'
+        const validPersons = editNominalPersons.filter(p => p.name.trim().length >= 2)
+        const finalValue = validPersons.length > 0 ? validPersons.length : editForm.value
 
-      setEditError(null)
-      setActionLoading(true)
-
-      try {
-        const { data: session } = await supabase.auth.getSession()
-        const userId = session.session?.user?.id
-
-        // Atualizar valor numérico
-        const finalValue = validNames.length > 0 ? validNames.length : editForm.value
-        const { error: updateErr } = await supabase
-          .from('weekly_indicator_data')
-          .update({ value: finalValue, week_start: editForm.week_start })
-          .eq('id', editingRow.id)
-
+        const { error: updateErr } = await supabase.from('weekly_indicator_data')
+          .update({ value: finalValue, week_start: editForm.week_start }).eq('id', editingRow.id)
         if (updateErr) {
-          if (updateErr.code === '23505') {
-            setEditError('Já existe um lançamento para esta ala/indicador neste domingo.')
-          } else {
-            setEditError('Erro ao salvar: ' + updateErr.message)
-          }
+          setEditError(updateErr.code === '23505' ? 'Já existe lançamento neste domingo.' : 'Erro: ' + updateErr.message)
           return
         }
 
-        // Salvar nomes (delete + insert)
-        if (validNames.length > 0) {
-          await supabase
-            .from('baptism_records')
-            .delete()
-            .eq('ward_id', editingRow.wards.id)
-            .eq('week_start', editForm.week_start)
-
-          // Também deletar nomes da semana original se mudou a data
+        if (validPersons.length > 0) {
+          await supabase.from(table).delete().eq('ward_id', editingRow.wards.id).eq('week_start', editForm.week_start)
           if (editForm.week_start !== editingRow.week_start) {
-            await supabase
-              .from('baptism_records')
-              .delete()
-              .eq('ward_id', editingRow.wards.id)
-              .eq('week_start', editingRow.week_start)
+            await supabase.from(table).delete().eq('ward_id', editingRow.wards.id).eq('week_start', editingRow.week_start)
           }
-
-          await supabase.from('baptism_records').insert(
-            validNames.map(name => ({
-              ward_id: editingRow.wards.id,
-              week_start: editForm.week_start,
-              person_name: name,
-              created_by: userId,
+          await supabase.from(table).insert(
+            validPersons.map(p => ({
+              ward_id: editingRow.wards.id, week_start: editForm.week_start,
+              person_name: p.name.trim(), birth_date: p.birth_date || null,
+              gender: p.gender || null, created_by: userId,
             }))
           )
         }
 
         setIsEditModalOpen(false)
-        setToast({ type: 'success', text: `Batismo atualizado! ${validNames.length} nome(s) salvos.` })
+        setToast({ type: 'success', text: `Atualizado! ${validPersons.length} nome(s) salvos.` })
         await fetchHistory()
-      } catch {
-        setEditError('Erro inesperado. Tente novamente.')
-      } finally {
-        setActionLoading(false)
+        return
       }
-      return
-    }
 
-    // ─── CASO PADRÃO ───
-    const error = validateEditForm(editForm.value, editForm.week_start)
-    if (error) { setEditError(error); return }
-    setEditError(null)
-    setActionLoading(true)
+      // ─── MISSIONÁRIOS ───
+      if (slug === 'missionario_servindo_missao_do_brasil') {
+        const validMissionaries = editMissionaries.filter(m => m.name.trim().length >= 2)
+        const activeCount = validMissionaries.filter(m =>
+          !m.mission_end_date || m.mission_end_date >= new Date().toISOString().split('T')[0]
+        ).length
 
-    try {
-      const { error: dbError } = await supabase
-        .from('weekly_indicator_data')
-        .update({ value: editForm.value, week_start: editForm.week_start })
-        .eq('id', editingRow.id)
+        // Atualizar contagem
+        const { error: updateErr } = await supabase.from('weekly_indicator_data')
+          .update({ value: activeCount, week_start: editForm.week_start }).eq('id', editingRow.id)
+        if (updateErr) { setEditError('Erro: ' + updateErr.message); return }
 
-      if (dbError) {
-        if (dbError.code === '23505') {
-          setEditError('Já existe um lançamento para esta ala/indicador neste domingo.')
-        } else if (dbError.code === '23514') {
-          setEditError('Dados inválidos. Verifique o valor e a data.')
-        } else {
-          setEditError('Erro ao salvar: ' + dbError.message)
+        // Reescrever missionários
+        await supabase.from('missionary_records').delete().eq('ward_id', editingRow.wards.id)
+        if (validMissionaries.length > 0) {
+          await supabase.from('missionary_records').insert(
+            validMissionaries.map(m => ({
+              ward_id: editingRow.wards.id, person_name: m.name.trim(),
+              gender: m.gender || null, mission_start_date: m.mission_start_date || null,
+              mission_end_date: m.mission_end_date || null, created_by: userId,
+            }))
+          )
         }
+
+        setIsEditModalOpen(false)
+        setToast({ type: 'success', text: `${validMissionaries.length} missionário(s) salvos! (${activeCount} ativos)` })
+        await fetchHistory()
+        return
+      }
+
+      // ─── PADRÃO ───
+      const error = validateEditForm(editForm.value, editForm.week_start)
+      if (error) { setEditError(error); setActionLoading(false); return }
+
+      const { error: dbError } = await supabase.from('weekly_indicator_data')
+        .update({ value: editForm.value, week_start: editForm.week_start }).eq('id', editingRow.id)
+      if (dbError) {
+        setEditError(dbError.code === '23505' ? 'Já existe lançamento neste domingo.' : 'Erro: ' + dbError.message)
         return
       }
 
       setIsEditModalOpen(false)
-      setToast({ type: 'success', text: 'Registro atualizado com sucesso!' })
+      setToast({ type: 'success', text: 'Registro atualizado!' })
       await fetchHistory()
-    } catch {
-      setEditError('Erro inesperado. Tente novamente.')
-    } finally {
-      setActionLoading(false)
-    }
+    } catch { setEditError('Erro inesperado.') }
+    finally { setActionLoading(false) }
   }
 
+  // ─── Modal: Delete ───
   const handleDelete = async () => {
     if (!editingRow) return
     setActionLoading(true)
-
     try {
-      // Se for batismo, deletar nomes também
-      if (isBaptismRow(editingRow)) {
-        await supabase
-          .from('baptism_records')
-          .delete()
-          .eq('ward_id', editingRow.wards.id)
-          .eq('week_start', editingRow.week_start)
+      const slug = getSlug(editingRow)
+      if (slug === 'batismo_converso') {
+        await supabase.from('baptism_records').delete().eq('ward_id', editingRow.wards.id).eq('week_start', editingRow.week_start)
+      } else if (slug === 'membros_retornando_a_igreja') {
+        await supabase.from('returning_member_records').delete().eq('ward_id', editingRow.wards.id).eq('week_start', editingRow.week_start)
       }
+      // Missionários: não deleta registros de missionary_records ao excluir weekly_indicator_data
 
       const { error } = await supabase.from('weekly_indicator_data').delete().eq('id', editingRow.id)
-
-      if (error) {
-        setEditError('Erro ao excluir: ' + error.message)
-        return
-      }
+      if (error) { setEditError('Erro: ' + error.message); return }
 
       setIsEditModalOpen(false)
       setToast({ type: 'success', text: 'Registro excluído.' })
       await fetchHistory()
-    } catch {
-      setEditError('Erro inesperado ao excluir.')
-    } finally {
-      setActionLoading(false)
-    }
+    } catch { setEditError('Erro ao excluir.') }
+    finally { setActionLoading(false) }
   }
 
   const openEditModal = (row: HistoryEntry) => {
@@ -413,26 +374,15 @@ export default function HistoricoPage() {
     setEditForm({ value: row.value, week_start: row.week_start })
     setShowDeleteConfirm(false)
     setEditError(null)
-    setEditBaptismNames([])
+    setEditNominalPersons([])
+    setEditMissionaries([])
     setIsEditModalOpen(true)
     setActiveDropdown(null)
-
-    // Se for batismo, carregar nomes existentes
-    if (isBaptismRow(row)) {
-      loadBaptismNames(row.wards.id, row.week_start)
-    }
+    if (isNominalRow(row)) loadNominalData(row)
   }
 
-  const clearFilters = () => {
-    setSelectedWards([])
-    setSelectedIndicators([])
-    setSelectedWeekDate('')
-    setDateRange({ start: '', end: '' })
-  }
-
-  const hasActiveFilters =
-    selectedWards.length > 0 || selectedIndicators.length > 0 || !!selectedWeekDate || !!dateRange.start || !!dateRange.end
-
+  const clearFilters = () => { setSelectedWards([]); setSelectedIndicators([]); setSelectedWeekDate(''); setDateRange({ start: '', end: '' }) }
+  const hasActiveFilters = selectedWards.length > 0 || selectedIndicators.length > 0 || !!selectedWeekDate || !!dateRange.start || !!dateRange.end
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
 
   // ═══════════════════════════════════════
@@ -454,32 +404,22 @@ export default function HistoricoPage() {
               <p className="text-slate-500 text-xs font-bold uppercase tracking-widest">{totalCount} Registros</p>
             </div>
           </div>
-
           <div className="flex flex-wrap items-center gap-3">
             <div className="md:hidden w-full">
               <button onClick={() => setMobileFiltersOpen(!mobileFiltersOpen)}
                 className={`flex items-center justify-between w-full border text-xs font-bold rounded-xl px-4 py-3 transition-all ${
                   hasActiveFilters ? 'bg-sky-50 border-sky-200 text-sky-700' : 'bg-slate-50 border-slate-200 text-slate-600'
                 }`}>
-                <div className="flex items-center gap-2">
-                  <Filter size={14} />
-                  {hasActiveFilters ? 'Filtros Ativos' : 'Filtrar Dados'}
-                </div>
+                <div className="flex items-center gap-2"><Filter size={14} />{hasActiveFilters ? 'Filtros Ativos' : 'Filtrar Dados'}</div>
                 <ChevronDown size={14} className={`transition-transform ${mobileFiltersOpen ? 'rotate-180' : ''}`} />
               </button>
             </div>
-
             {hasActiveFilters && (
-              <button onClick={clearFilters}
-                className="hidden md:block text-xs font-bold text-rose-500 hover:bg-rose-50 px-4 py-2.5 rounded-xl transition-all border border-transparent hover:border-rose-100">
-                Limpar Filtros
-              </button>
+              <button onClick={clearFilters} className="hidden md:block text-xs font-bold text-rose-500 hover:bg-rose-50 px-4 py-2.5 rounded-xl transition-all border border-transparent hover:border-rose-100">Limpar Filtros</button>
             )}
-
             <div className="h-10 w-px bg-slate-200 hidden md:block mx-2"></div>
-
             <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}
-              className="flex-1 md:flex-none bg-slate-50 border-slate-200 text-slate-600 text-xs font-bold rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-sky-500/20">
+              className="flex-1 md:flex-none bg-slate-50 border-slate-200 text-slate-600 text-xs font-bold rounded-xl px-4 py-2.5 outline-none">
               <option value={15}>15 / pág</option>
               <option value={50}>50 / pág</option>
               <option value={100}>100 / pág</option>
@@ -487,20 +427,20 @@ export default function HistoricoPage() {
           </div>
         </div>
 
-        {/* FILTROS MOBILE */}
+        {/* FILTROS MOBILE — títulos maiores e mais contraste */}
         {mobileFiltersOpen && (
           <div className="md:hidden bg-white p-5 rounded-3xl shadow-lg border border-slate-100 space-y-5 animate-in slide-in-from-top-2">
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Semana de Referência</label>
+              <label className="text-xs font-black text-slate-700 uppercase tracking-wider">Semana de Referência</label>
               <select value={selectedWeekDate} onChange={(e) => setSelectedWeekDate(e.target.value)}
-                className="w-full bg-slate-50 border-slate-200 text-slate-700 text-sm font-bold rounded-xl p-3 outline-none">
+                className="w-full bg-slate-50 border border-slate-200 text-slate-700 text-sm font-bold rounded-xl p-3 outline-none">
                 <option value="">Todas as Semanas</option>
                 {filterOptions.weeks.map((w) => (<option key={w.date} value={w.date}>{w.label}</option>))}
               </select>
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Unidades ({selectedWards.length})</label>
-              <div className="max-h-32 overflow-y-auto border border-slate-100 rounded-xl p-2 bg-slate-50">
+              <label className="text-xs font-black text-slate-700 uppercase tracking-wider">Unidades ({selectedWards.length})</label>
+              <div className="max-h-32 overflow-y-auto border border-slate-200 rounded-xl p-2 bg-slate-50">
                 {filterOptions.wards.map((ward) => (
                   <CheckboxItem key={ward.id} label={ward.name} checked={selectedWards.includes(ward.id)}
                     onClick={() => setSelectedWards((prev) => prev.includes(ward.id) ? prev.filter((id) => id !== ward.id) : [...prev, ward.id])} />
@@ -508,8 +448,8 @@ export default function HistoricoPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Indicadores ({selectedIndicators.length})</label>
-              <div className="max-h-32 overflow-y-auto border border-slate-100 rounded-xl p-2 bg-slate-50">
+              <label className="text-xs font-black text-slate-700 uppercase tracking-wider">Indicadores ({selectedIndicators.length})</label>
+              <div className="max-h-32 overflow-y-auto border border-slate-200 rounded-xl p-2 bg-slate-50">
                 {filterOptions.indicators.map((ind) => (
                   <CheckboxItem key={ind.id} label={ind.display_name} checked={selectedIndicators.includes(ind.id)}
                     onClick={() => setSelectedIndicators((prev) => prev.includes(ind.id) ? prev.filter((id) => id !== ind.id) : [...prev, ind.id])} />
@@ -517,21 +457,19 @@ export default function HistoricoPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Data de Lançamento</label>
+              <label className="text-xs font-black text-slate-700 uppercase tracking-wider">Data de Lançamento</label>
               <div className="flex gap-2">
                 <input type="date" value={dateRange.start} onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
-                  className="flex-1 bg-slate-50 border-slate-200 text-slate-600 text-xs font-bold rounded-xl p-2.5 outline-none" />
+                  className="flex-1 bg-slate-50 border border-slate-200 text-slate-600 text-xs font-bold rounded-xl p-2.5 outline-none" />
                 <input type="date" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
-                  className="flex-1 bg-slate-50 border-slate-200 text-slate-600 text-xs font-bold rounded-xl p-2.5 outline-none" />
+                  className="flex-1 bg-slate-50 border border-slate-200 text-slate-600 text-xs font-bold rounded-xl p-2.5 outline-none" />
               </div>
             </div>
-            {hasActiveFilters && (
-              <button onClick={clearFilters} className="w-full py-3 bg-rose-50 text-rose-600 font-bold rounded-xl text-xs">Limpar Todos os Filtros</button>
-            )}
+            {hasActiveFilters && (<button onClick={clearFilters} className="w-full py-3 bg-rose-50 text-rose-600 font-bold rounded-xl text-xs">Limpar Todos os Filtros</button>)}
           </div>
         )}
 
-        {/* CONTAINER DE DADOS */}
+        {/* TABELA + CARDS */}
         <div className="relative">
           {loading && (
             <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] z-30 flex items-center justify-center rounded-[2.5rem]">
@@ -539,13 +477,14 @@ export default function HistoricoPage() {
             </div>
           )}
 
-          {/* ═══ TABELA DESKTOP ═══ */}
+          {/* TABELA DESKTOP */}
           <div className="hidden md:block bg-white rounded-[2.5rem] shadow-xl shadow-slate-200/60 border border-slate-200 overflow-visible">
             <div className="overflow-visible">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50/50 border-b border-slate-100">
-                    <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest relative w-[18%]">
+                    {/* SEMANA — título maior + mais contraste */}
+                    <th className="p-6 text-xs font-black text-slate-600 uppercase tracking-wider relative w-[18%]">
                       <button onClick={() => toggleDropdown('week')}
                         className={`flex items-center gap-2 hover:text-sky-600 transition-colors ${selectedWeekDate ? 'text-sky-600' : ''}`}>
                         <Calendar size={14} /> Semana
@@ -565,7 +504,8 @@ export default function HistoricoPage() {
                         </div>
                       )}
                     </th>
-                    <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest relative w-[25%]">
+                    {/* UNIDADE */}
+                    <th className="p-6 text-xs font-black text-slate-600 uppercase tracking-wider relative w-[25%]">
                       <button onClick={() => toggleDropdown('wards')}
                         className={`flex items-center gap-2 hover:text-sky-600 transition-colors ${selectedWards.length > 0 ? 'text-sky-600' : ''}`}>
                         <Building2 size={14} /> Unidade {selectedWards.length > 0 && `(${selectedWards.length})`}
@@ -575,7 +515,7 @@ export default function HistoricoPage() {
                         <div className="absolute top-full left-0 mt-2 w-72 bg-white shadow-2xl rounded-2xl border border-slate-100 z-50 p-3 max-h-80 overflow-hidden flex flex-col animate-in slide-in-from-top-2">
                           <div className="flex justify-between items-center mb-2 pb-2 border-b border-slate-50">
                             <span className="text-xs font-bold text-slate-800">Selecionar Unidades</span>
-                            {selectedWards.length > 0 && (<button onClick={() => setSelectedWards([])} className="text-[10px] font-bold text-rose-500 hover:text-rose-600">Limpar</button>)}
+                            {selectedWards.length > 0 && <button onClick={() => setSelectedWards([])} className="text-[10px] font-bold text-rose-500">Limpar</button>}
                           </div>
                           <div className="overflow-y-auto flex-1 pr-1">
                             {filterOptions.wards.map((ward) => (
@@ -586,7 +526,8 @@ export default function HistoricoPage() {
                         </div>
                       )}
                     </th>
-                    <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest relative w-[25%]">
+                    {/* INDICADOR */}
+                    <th className="p-6 text-xs font-black text-slate-600 uppercase tracking-wider relative w-[25%]">
                       <button onClick={() => toggleDropdown('indicators')}
                         className={`flex items-center gap-2 hover:text-sky-600 transition-colors ${selectedIndicators.length > 0 ? 'text-sky-600' : ''}`}>
                         <Target size={14} /> Indicador {selectedIndicators.length > 0 && `(${selectedIndicators.length})`}
@@ -596,7 +537,7 @@ export default function HistoricoPage() {
                         <div className="absolute top-full left-0 mt-2 w-80 bg-white shadow-2xl rounded-2xl border border-slate-100 z-50 p-3 max-h-80 overflow-hidden flex flex-col animate-in slide-in-from-top-2">
                           <div className="flex justify-between items-center mb-2 pb-2 border-b border-slate-50">
                             <span className="text-xs font-bold text-slate-800">Selecionar Indicadores</span>
-                            {selectedIndicators.length > 0 && (<button onClick={() => setSelectedIndicators([])} className="text-[10px] font-bold text-rose-500 hover:text-rose-600">Limpar</button>)}
+                            {selectedIndicators.length > 0 && <button onClick={() => setSelectedIndicators([])} className="text-[10px] font-bold text-rose-500">Limpar</button>}
                           </div>
                           <div className="overflow-y-auto flex-1 pr-1">
                             {filterOptions.indicators.map((ind) => (
@@ -607,10 +548,11 @@ export default function HistoricoPage() {
                         </div>
                       )}
                     </th>
-                    <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center w-[10%]">
+                    <th className="p-6 text-xs font-black text-slate-600 uppercase tracking-wider text-center w-[10%]">
                       <div className="flex items-center justify-center gap-2"><Hash size={14} /> Valor</div>
                     </th>
-                    <th className="p-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right relative w-[20%]">
+                    {/* LANÇAMENTO */}
+                    <th className="p-6 text-xs font-black text-slate-600 uppercase tracking-wider text-right relative w-[20%]">
                       <button onClick={() => toggleDropdown('launch')}
                         className={`flex items-center justify-end w-full gap-2 hover:text-sky-600 transition-colors ${dateRange.start || dateRange.end ? 'text-sky-600' : ''}`}>
                         <Clock size={14} /> Lançamento
@@ -620,16 +562,16 @@ export default function HistoricoPage() {
                         <div className="absolute top-full right-4 mt-2 w-72 bg-white shadow-2xl rounded-2xl border border-slate-100 z-50 p-4 animate-in slide-in-from-top-2 cursor-default">
                           <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-50">
                             <span className="text-xs font-bold text-slate-800">Intervalo de Data</span>
-                            {(dateRange.start || dateRange.end) && (<button onClick={() => setDateRange({ start: '', end: '' })} className="text-[10px] font-bold text-rose-500 hover:text-rose-600">Limpar</button>)}
+                            {(dateRange.start || dateRange.end) && <button onClick={() => setDateRange({ start: '', end: '' })} className="text-[10px] font-bold text-rose-500">Limpar</button>}
                           </div>
                           <div className="space-y-3">
                             <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase">De:</label>
+                              <label className="text-[10px] font-bold text-slate-500 uppercase">De:</label>
                               <input type="date" value={dateRange.start} onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
                                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-medium text-slate-600 outline-none focus:border-sky-400" />
                             </div>
                             <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-slate-400 uppercase">Até:</label>
+                              <label className="text-[10px] font-bold text-slate-500 uppercase">Até:</label>
                               <input type="date" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
                                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-medium text-slate-600 outline-none focus:border-sky-400" />
                             </div>
@@ -642,38 +584,28 @@ export default function HistoricoPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {data.length === 0 && !loading && (
-                    <tr><td colSpan={6} className="p-12 text-center text-slate-400 text-sm font-medium">Nenhum registro encontrado com os filtros selecionados.</td></tr>
+                    <tr><td colSpan={6} className="p-12 text-center text-slate-400 text-sm font-medium">Nenhum registro encontrado.</td></tr>
                   )}
                   {data.map((row) => {
                     const { week, year } = getWeekNumber(new Date(row.week_start + 'T12:00:00'))
                     const wasEdited = !!row.updated_at
-                    const isBaptism = isBaptismRow(row)
+                    const nominal = getNominalLabel(row)
                     return (
                       <tr key={row.id} className="group hover:bg-slate-50/80 transition-all">
-                        <td className="p-6">
-                          <span className="text-sm font-bold text-slate-700">Semana {week}</span>
-                          <span className="text-[10px] text-slate-400 block font-medium">{year}</span>
-                        </td>
-                        <td className="p-6">
-                          <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-600 text-[10px] font-black uppercase border border-slate-200">{row.wards.name}</span>
-                        </td>
+                        <td className="p-6"><span className="text-sm font-bold text-slate-700">Semana {week}</span><span className="text-[10px] text-slate-400 block font-medium">{year}</span></td>
+                        <td className="p-6"><span className="px-3 py-1 rounded-full bg-slate-100 text-slate-600 text-[10px] font-black uppercase border border-slate-200">{row.wards.name}</span></td>
                         <td className="p-6">
                           <span className="text-sm font-semibold text-slate-600 group-hover:text-sky-700 transition-colors">{row.indicators.display_name}</span>
-                          {isBaptism && <span className="text-[9px] text-emerald-500 font-bold block mt-0.5">nominal</span>}
+                          {nominal.text && <span className={`text-[9px] font-bold block mt-0.5 ${nominal.color}`}>{nominal.text}</span>}
                         </td>
-                        <td className="p-6 text-center">
-                          <span className="text-base font-black text-slate-800 bg-slate-50 px-3 py-1 rounded-lg border border-slate-100">{row.value}</span>
-                        </td>
+                        <td className="p-6 text-center"><span className="text-base font-black text-slate-800 bg-slate-50 px-3 py-1 rounded-lg border border-slate-100">{row.value}</span></td>
                         <td className="p-6 text-right">
                           <span className="text-[11px] font-bold text-slate-500">{new Date(row.created_at).toLocaleDateString('pt-BR')}</span>
                           <span className="text-[10px] text-slate-300 block">{new Date(row.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
-                          {wasEdited && (<span className="text-[9px] text-amber-500 font-bold block mt-0.5">editado {new Date(row.updated_at!).toLocaleDateString('pt-BR')}</span>)}
+                          {wasEdited && <span className="text-[9px] text-amber-500 font-bold block mt-0.5">editado {new Date(row.updated_at!).toLocaleDateString('pt-BR')}</span>}
                         </td>
                         <td className="p-6 text-right">
-                          <button onClick={() => openEditModal(row)}
-                            className="p-2 text-slate-300 hover:text-sky-600 hover:bg-sky-50 rounded-xl transition-all opacity-0 group-hover:opacity-100">
-                            <Edit2 size={16} />
-                          </button>
+                          <button onClick={() => openEditModal(row)} className="p-2 text-slate-300 hover:text-sky-600 hover:bg-sky-50 rounded-xl transition-all opacity-0 group-hover:opacity-100"><Edit2 size={16} /></button>
                         </td>
                       </tr>
                     )
@@ -683,22 +615,20 @@ export default function HistoricoPage() {
             </div>
           </div>
 
-          {/* ═══ CARDS MOBILE ═══ */}
+          {/* CARDS MOBILE */}
           <div className="md:hidden space-y-3">
-            {data.length === 0 && !loading && (
-              <div className="text-center py-10 text-slate-400 text-sm font-medium bg-white rounded-3xl border border-slate-100">Nenhum registro encontrado.</div>
-            )}
+            {data.length === 0 && !loading && (<div className="text-center py-10 text-slate-400 text-sm font-medium bg-white rounded-3xl border border-slate-100">Nenhum registro.</div>)}
             {data.map((row) => {
               const { week, year } = getWeekNumber(new Date(row.week_start + 'T12:00:00'))
               const wasEdited = !!row.updated_at
-              const isBaptism = isBaptismRow(row)
+              const nominal = getNominalLabel(row)
               return (
-                <div key={row.id} className="bg-white p-5 rounded-3xl shadow-sm border border-slate-200 flex flex-col gap-3 relative">
+                <div key={row.id} className="bg-white p-5 rounded-3xl shadow-sm border border-slate-200 flex flex-col gap-3">
                   <div className="flex justify-between items-start gap-3">
                     <div className="flex flex-col">
                       <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Indicador</span>
                       <span className="text-sm font-bold text-slate-800 leading-tight">{row.indicators.display_name}</span>
-                      {isBaptism && <span className="text-[9px] text-emerald-500 font-bold mt-0.5">nominal</span>}
+                      {nominal.text && <span className={`text-[9px] font-bold mt-0.5 ${nominal.color}`}>{nominal.text}</span>}
                     </div>
                     <div className="bg-slate-50 border border-slate-100 px-3 py-2 rounded-xl flex flex-col items-center min-w-[3.5rem]">
                       <span className="text-[10px] text-slate-400 font-bold uppercase">Valor</span>
@@ -707,31 +637,19 @@ export default function HistoricoPage() {
                   </div>
                   <div className="h-px bg-slate-100 w-full my-1"></div>
                   <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Unidade</span>
-                      <span className="inline-block px-2 py-1 rounded-lg bg-slate-100 text-slate-600 text-[10px] font-bold border border-slate-200">{row.wards.name}</span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Semana Ref.</span>
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-sm font-bold text-slate-700">Semana {week}</span>
-                        <span className="text-[10px] text-slate-400">/{year}</span>
-                      </div>
-                    </div>
+                    <div><span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Unidade</span>
+                      <span className="inline-block px-2 py-1 rounded-lg bg-slate-100 text-slate-600 text-[10px] font-bold border border-slate-200">{row.wards.name}</span></div>
+                    <div><span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Semana</span>
+                      <div className="flex items-baseline gap-1"><span className="text-sm font-bold text-slate-700">Sem. {week}</span><span className="text-[10px] text-slate-400">/{year}</span></div></div>
                   </div>
                   <div className="flex justify-between items-end mt-2 pt-3 border-t border-slate-50">
                     <div className="flex flex-col">
-                      <div className="flex items-center gap-1.5 text-slate-400">
-                        <Clock size={12} />
-                        <span className="text-[10px] font-medium">
-                          {new Date(row.created_at).toLocaleDateString('pt-BR')} às {new Date(row.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                        </span>
+                      <div className="flex items-center gap-1.5 text-slate-400"><Clock size={12} />
+                        <span className="text-[10px] font-medium">{new Date(row.created_at).toLocaleDateString('pt-BR')} às {new Date(row.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
-                      {wasEdited && (<span className="text-[9px] text-amber-500 font-bold mt-0.5 ml-5">editado {new Date(row.updated_at!).toLocaleDateString('pt-BR')}</span>)}
+                      {wasEdited && <span className="text-[9px] text-amber-500 font-bold mt-0.5 ml-5">editado {new Date(row.updated_at!).toLocaleDateString('pt-BR')}</span>}
                     </div>
-                    <button onClick={() => openEditModal(row)} className="p-2 text-sky-600 bg-sky-50 hover:bg-sky-100 rounded-xl transition-all">
-                      <Edit2 size={16} />
-                    </button>
+                    <button onClick={() => openEditModal(row)} className="p-2 text-sky-600 bg-sky-50 hover:bg-sky-100 rounded-xl transition-all"><Edit2 size={16} /></button>
                   </div>
                 </div>
               )
@@ -743,119 +661,171 @@ export default function HistoricoPage() {
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest order-2 sm:order-1">Página {page} de {totalPages}</p>
             <div className="flex items-center gap-2 order-1 sm:order-2 w-full sm:w-auto justify-center">
               <button disabled={page === 1} onClick={() => setPage((p) => p - 1)}
-                className="flex-1 sm:flex-none p-3 md:p-2 rounded-xl bg-white border border-slate-200 text-slate-400 hover:text-sky-600 disabled:opacity-30 transition-all shadow-sm flex justify-center">
-                <ChevronLeft size={18} />
-              </button>
+                className="flex-1 sm:flex-none p-3 md:p-2 rounded-xl bg-white border border-slate-200 text-slate-400 hover:text-sky-600 disabled:opacity-30 transition-all shadow-sm flex justify-center"><ChevronLeft size={18} /></button>
               <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}
-                className="flex-1 sm:flex-none p-3 md:p-2 rounded-xl bg-white border border-slate-200 text-slate-400 hover:text-sky-600 disabled:opacity-30 transition-all shadow-sm flex justify-center">
-                <ChevronRight size={18} />
-              </button>
+                className="flex-1 sm:flex-none p-3 md:p-2 rounded-xl bg-white border border-slate-200 text-slate-400 hover:text-sky-600 disabled:opacity-30 transition-all shadow-sm flex justify-center"><ChevronRight size={18} /></button>
             </div>
           </div>
         </div>
       </div>
 
       {/* ═══ MODAL DE EDIÇÃO ═══ */}
-      {isEditModalOpen && (
+      {isEditModalOpen && editingRow && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" onClick={() => setIsEditModalOpen(false)} />
-          <div className="relative bg-white w-full max-w-md mx-auto rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+          <div className="relative bg-white w-full max-w-lg mx-auto rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
             <div className="p-6 md:p-8 overflow-y-auto">
               {!showDeleteConfirm ? (
-                <div className="space-y-6">
+                <div className="space-y-5">
                   <div className="flex justify-between items-start">
                     <div>
                       <h3 className="text-2xl font-black text-slate-800">Editar Registro</h3>
-                      <p className="text-slate-400 text-sm font-medium pr-4">{editingRow?.indicators.display_name}</p>
-                      <p className="text-slate-300 text-xs font-medium mt-0.5">{editingRow?.wards.name}</p>
+                      <p className="text-slate-400 text-sm font-medium pr-4">{editingRow.indicators.display_name}</p>
+                      <p className="text-slate-300 text-xs font-medium mt-0.5">{editingRow.wards.name}</p>
                     </div>
                     <button onClick={() => setIsEditModalOpen(false)} className="text-slate-300 hover:text-slate-500 p-2 -mr-2 -mt-2"><X /></button>
                   </div>
 
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Data + Valor */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {!isMissionarioRow(editingRow) && (
                       <div className="space-y-1">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Data Referência (Domingo)</label>
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Domingo</label>
                         <input type="date" value={editForm.week_start}
                           onChange={(e) => { setEditForm({ ...editForm, week_start: e.target.value }); setEditError(null) }}
-                          className="w-full bg-slate-50 border-slate-200 rounded-2xl p-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-sky-500/20" />
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-sky-500/20" />
                       </div>
-
-                      {/* Valor numérico — para batismo mostra como readonly (calculado) */}
-                      {editingRow && !isBaptismRow(editingRow) && (
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Valor</label>
-                          <input type="number" value={editForm.value} min={0} max={10000}
-                            onChange={(e) => { setEditForm({ ...editForm, value: Number(e.target.value) }); setEditError(null) }}
-                            className="w-full bg-slate-50 border-slate-200 rounded-2xl p-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-sky-500/20" />
+                    )}
+                    {!isNominalRow(editingRow) ? (
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Valor</label>
+                        <input type="number" value={editForm.value} min={0} max={10000}
+                          onChange={(e) => { setEditForm({ ...editForm, value: Number(e.target.value) }); setEditError(null) }}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-sky-500/20" />
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Contagem</label>
+                        <div className={`border rounded-2xl p-3 text-sm font-black text-center ${
+                          isBaptismRow(editingRow) ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
+                          isRetornandoRow(editingRow) ? 'bg-orange-50 border-orange-200 text-orange-700' :
+                          'bg-indigo-50 border-indigo-200 text-indigo-700'
+                        }`}>
+                          {isMissionarioRow(editingRow)
+                            ? `${editMissionaries.filter(m => !m.mission_end_date || m.mission_end_date >= new Date().toISOString().split('T')[0]).length} ativo(s)`
+                            : `${editNominalPersons.filter(p => p.name.trim().length >= 2).length} pessoa(s)`
+                          }
                         </div>
-                      )}
-
-                      {editingRow && isBaptismRow(editingRow) && (
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contagem</label>
-                          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 text-sm font-black text-emerald-700 text-center">
-                            {editBaptismNames.filter(n => n.trim().length >= 2).length || editForm.value} pessoa(s)
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </div>
 
-                  {/* ─── NOMES DE BATISMO ─── */}
-                  {editingRow && isBaptismRow(editingRow) && (
-                    <div className="space-y-3 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl">
+                  {/* ─── NOMES: Batismo / Retornando ─── */}
+                  {(isBaptismRow(editingRow) || isRetornandoRow(editingRow)) && (
+                    <div className={`space-y-3 p-4 border rounded-2xl ${
+                      isBaptismRow(editingRow) ? 'bg-emerald-50 border-emerald-100' : 'bg-orange-50 border-orange-100'
+                    }`}>
                       <div className="flex items-center justify-between">
-                        <label className="text-xs font-black text-emerald-700 uppercase tracking-wider flex items-center gap-2">
-                          <UserPlus size={14} className="text-emerald-500" /> Nomes dos Batizados
+                        <label className={`text-xs font-black uppercase tracking-wider flex items-center gap-2 ${
+                          isBaptismRow(editingRow) ? 'text-emerald-700' : 'text-orange-700'
+                        }`}>
+                          <UserPlus size={14} className={isBaptismRow(editingRow) ? 'text-emerald-500' : 'text-orange-500'} />
+                          {isBaptismRow(editingRow) ? 'Batizados' : 'Retornando'}
                         </label>
-                        {loadingBaptisms && <Loader2 size={14} className="animate-spin text-emerald-400" />}
+                        {loadingNominal && <Loader2 size={14} className="animate-spin text-slate-400" />}
                       </div>
-
-                      {editBaptismNames.length === 0 && !loadingBaptisms && (
-                        <p className="text-[10px] text-emerald-500 italic">Nenhum nome registrado ainda. Adicione abaixo.</p>
-                      )}
-
-                      <div className="space-y-2 max-h-48 overflow-y-auto">
-                        {editBaptismNames.map((name, index) => (
-                          <div key={index} className="flex items-center gap-2">
-                            <span className="text-xs font-black text-emerald-400 w-5 text-center shrink-0">{index + 1}</span>
-                            <input
-                              type="text"
-                              value={name}
-                              onChange={e => updateBaptismName(index, e.target.value)}
-                              placeholder="Nome completo"
-                              className="flex-1 rounded-xl border-2 border-emerald-200 bg-white px-3 py-2.5 text-sm font-bold text-emerald-800 outline-none focus:border-emerald-400 transition-all placeholder:text-emerald-300"
-                            />
-                            {editBaptismNames.length > 1 && (
-                              <button type="button" onClick={() => removeBaptismName(index)}
-                                className="p-1.5 rounded-lg text-rose-400 hover:bg-rose-50 hover:text-rose-600 transition-all shrink-0">
-                                <Trash2 size={14} />
-                              </button>
-                            )}
+                      <div className="space-y-2 max-h-52 overflow-y-auto">
+                        {editNominalPersons.map((person, index) => (
+                          <div key={index} className={`p-2.5 rounded-xl border bg-white ${
+                            isBaptismRow(editingRow) ? 'border-emerald-200' : 'border-orange-200'
+                          }`}>
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <span className={`text-xs font-black w-4 text-center shrink-0 ${
+                                isBaptismRow(editingRow) ? 'text-emerald-400' : 'text-orange-400'
+                              }`}>{index + 1}</span>
+                              <input type="text" value={person.name} onChange={e => updateNominalPerson(index, 'name', e.target.value)}
+                                placeholder="Nome completo"
+                                className={`flex-1 rounded-lg border px-2.5 py-2 text-sm font-bold outline-none transition-all ${
+                                  isBaptismRow(editingRow) ? 'border-emerald-200 text-emerald-800 focus:border-emerald-400' : 'border-orange-200 text-orange-800 focus:border-orange-400'
+                                }`} />
+                              {editNominalPersons.length > 1 && (
+                                <button type="button" onClick={() => removeNominalPerson(index)}
+                                  className="p-1 rounded text-rose-400 hover:bg-rose-50 shrink-0"><Trash2 size={13} /></button>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 ml-6">
+                              <input type="date" value={person.birth_date} onChange={e => updateNominalPerson(index, 'birth_date', e.target.value)}
+                                className="rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] font-medium text-slate-600 outline-none" title="Nascimento" />
+                              <select value={person.gender} onChange={e => updateNominalPerson(index, 'gender', e.target.value)}
+                                className="rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] font-medium text-slate-600 outline-none">
+                                <option value="">Gênero</option><option value="M">Masculino</option><option value="F">Feminino</option>
+                              </select>
+                            </div>
                           </div>
                         ))}
                       </div>
+                      <button type="button" onClick={addNominalPerson}
+                        className={`flex items-center gap-2 font-bold text-xs px-1 py-1 ${
+                          isBaptismRow(editingRow) ? 'text-emerald-600' : 'text-orange-600'
+                        }`}><Plus size={14} /> Adicionar pessoa</button>
+                    </div>
+                  )}
 
-                      <button type="button" onClick={addBaptismName}
-                        className="flex items-center gap-2 text-emerald-600 font-bold text-xs hover:text-emerald-800 transition-colors px-1 py-1">
-                        <Plus size={14} /> Adicionar nome
-                      </button>
+                  {/* ─── NOMES: Missionários ─── */}
+                  {isMissionarioRow(editingRow) && (
+                    <div className="space-y-3 p-4 bg-indigo-50 border border-indigo-100 rounded-2xl">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-black text-indigo-700 uppercase tracking-wider flex items-center gap-2">
+                          <BookOpen size={14} className="text-indigo-500" /> Missionários
+                        </label>
+                        {loadingNominal && <Loader2 size={14} className="animate-spin text-indigo-400" />}
+                      </div>
+                      <div className="space-y-2 max-h-52 overflow-y-auto">
+                        {editMissionaries.map((m, index) => {
+                          const isInactive = m.mission_end_date && m.mission_end_date < new Date().toISOString().split('T')[0]
+                          return (
+                            <div key={index} className={`p-2.5 rounded-xl border bg-white ${isInactive ? 'border-slate-200 opacity-50' : 'border-indigo-200'}`}>
+                              <div className="flex items-center gap-2 mb-1.5">
+                                <span className="text-xs font-black text-indigo-400 w-4 text-center shrink-0">{index + 1}</span>
+                                <input type="text" value={m.name} onChange={e => updateMissionary(index, 'name', e.target.value)}
+                                  placeholder="Nome" className="flex-1 rounded-lg border border-indigo-200 px-2.5 py-2 text-sm font-bold text-indigo-800 outline-none focus:border-indigo-400" />
+                                <select value={m.gender} onChange={e => updateMissionary(index, 'gender', e.target.value)}
+                                  className="rounded-lg border border-slate-200 px-1.5 py-2 text-[11px] font-medium text-slate-600 outline-none w-20">
+                                  <option value="">Gên.</option><option value="M">M</option><option value="F">F</option>
+                                </select>
+                                <button type="button" onClick={() => removeMissionary(index)}
+                                  className="p-1 rounded text-rose-400 hover:bg-rose-50 shrink-0"><Trash2 size={13} /></button>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 ml-6">
+                                <div><label className="text-[8px] font-bold text-slate-400 uppercase">Início</label>
+                                  <input type="date" value={m.mission_start_date} onChange={e => updateMissionary(index, 'mission_start_date', e.target.value)}
+                                    className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] text-slate-600 outline-none" /></div>
+                                <div><label className="text-[8px] font-bold text-slate-400 uppercase">Término</label>
+                                  <input type="date" value={m.mission_end_date} onChange={e => updateMissionary(index, 'mission_end_date', e.target.value)}
+                                    className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] text-slate-600 outline-none" /></div>
+                              </div>
+                              {isInactive && <p className="text-[8px] text-rose-500 font-bold mt-1 ml-6">Missão encerrada</p>}
+                            </div>
+                          )
+                        })}
+                      </div>
+                      <button type="button" onClick={addMissionary}
+                        className="flex items-center gap-2 text-indigo-600 font-bold text-xs px-1 py-1"><Plus size={14} /> Adicionar missionário</button>
                     </div>
                   )}
 
                   {editError && (
-                    <div className="flex items-start gap-3 p-4 bg-rose-50 border border-rose-100 rounded-2xl animate-in fade-in slide-in-from-top-2">
+                    <div className="flex items-start gap-3 p-4 bg-rose-50 border border-rose-100 rounded-2xl">
                       <AlertCircle size={18} className="text-rose-500 shrink-0 mt-0.5" />
                       <span className="text-sm font-bold text-rose-700">{editError}</span>
                     </div>
                   )}
 
-                  <div className="flex flex-col gap-3 pt-4">
+                  <div className="flex flex-col gap-3 pt-2">
                     <button onClick={handleUpdate} disabled={actionLoading}
                       className="w-full bg-sky-600 hover:bg-sky-700 text-white font-black py-4 rounded-2xl shadow-lg shadow-sky-200 transition-all flex items-center justify-center gap-2 disabled:opacity-70">
                       {actionLoading ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
-                      {editingRow && isBaptismRow(editingRow) ? 'SALVAR NOMES E VALOR' : 'ATUALIZAR DADOS'}
+                      {isNominalRow(editingRow) ? 'SALVAR NOMES E VALOR' : 'ATUALIZAR DADOS'}
                     </button>
                     <button onClick={() => { setShowDeleteConfirm(true); setEditError(null) }}
                       className="w-full py-3 text-rose-500 text-xs font-black uppercase tracking-widest hover:bg-rose-50 rounded-2xl transition-all">
@@ -865,27 +835,20 @@ export default function HistoricoPage() {
                 </div>
               ) : (
                 <div className="text-center space-y-6 py-4">
-                  <div className="w-20 h-20 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto">
-                    <AlertTriangle size={40} />
-                  </div>
+                  <div className="w-20 h-20 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto"><AlertTriangle size={40} /></div>
                   <div>
                     <h3 className="text-xl font-black text-slate-800">Confirmar Exclusão?</h3>
                     <p className="text-slate-500 text-sm mt-2">
-                      Esta ação é permanente e removerá este lançamento
-                      {editingRow && isBaptismRow(editingRow) ? ' e todos os nomes associados' : ''} de todos os relatórios.
+                      Esta ação é permanente{isNominalRow(editingRow) ? ' e removerá os nomes associados' : ''}.
                     </p>
                   </div>
-
                   {editError && (
                     <div className="flex items-center gap-3 p-4 bg-rose-50 border border-rose-100 rounded-2xl">
-                      <AlertCircle size={18} className="text-rose-500 shrink-0" />
-                      <span className="text-sm font-bold text-rose-700">{editError}</span>
+                      <AlertCircle size={18} className="text-rose-500 shrink-0" /><span className="text-sm font-bold text-rose-700">{editError}</span>
                     </div>
                   )}
-
                   <div className="flex flex-col sm:flex-row gap-3">
-                    <button onClick={() => setShowDeleteConfirm(false)}
-                      className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-all">VOLTAR</button>
+                    <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-all">VOLTAR</button>
                     <button onClick={handleDelete} disabled={actionLoading}
                       className="flex-1 py-4 bg-rose-500 text-white font-bold rounded-2xl hover:bg-rose-600 transition-all shadow-lg shadow-rose-200 disabled:opacity-70">
                       {actionLoading ? 'EXCLUINDO...' : 'SIM, EXCLUIR'}
