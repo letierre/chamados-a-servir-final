@@ -132,7 +132,11 @@ function getRecentSundays(count: number): string[] {
   const d = new Date()
   d.setDate(d.getDate() - d.getDay())
   for (let i = 0; i < count; i++) {
-    sundays.push(d.toISOString().split('T')[0])
+    // Usar formatação local em vez de toISOString (que converte para UTC)
+    const yyyy = d.getFullYear()
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    sundays.push(`${yyyy}-${mm}-${dd}`)
     d.setDate(d.getDate() - 7)
   }
   return sundays
