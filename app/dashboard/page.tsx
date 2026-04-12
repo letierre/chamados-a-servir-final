@@ -3,13 +3,14 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createClient } from '../../lib/supabase/client'
 import { useRouter } from 'next/navigation'
-import { 
-  Users, UserPlus, Heart, Church, 
+import {
+  Users, UserPlus, Heart, Church,
   Award, BookOpen, Target,
   Trophy, AlertCircle,
   Search, BarChart3,
   FileText, FileSpreadsheet,
-  TrendingUp, Printer, Bot, Sparkles, Loader2
+  TrendingUp, Printer, Bot, Sparkles, Loader2,
+  CalendarRange, X
 } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
@@ -19,7 +20,7 @@ import {
 // TIPOS
 // ═══════════════════════════════════════
 
-type Period = 'current_month' | 'last_month' | '90d' | '12m'
+type Period = 'current_month' | 'last_month' | '90d' | '12m' | 'current_year' | 'custom'
 
 type Ward = { id: string; name: string; membership_count: number | null }
 type Indicator = { id: string; slug: string; display_name: string; order_index: number }
@@ -62,14 +63,15 @@ const ICON_MAP: Record<string, React.ReactNode> = {
 
 const PERIOD_LABELS: Record<Period, string> = {
   current_month: 'Mês Atual', last_month: 'Mês Passado', '90d': '90 Dias', '12m': '12 Meses',
+  current_year: 'Ano Atual', custom: 'Personalizado',
 }
-const PERIOD_OPTIONS: Period[] = ['current_month', 'last_month', '90d', '12m']
+const PERIOD_OPTIONS: Period[] = ['current_month', 'last_month', '90d', '12m', 'current_year', 'custom']
 
 // ═══════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════
 
-function getDateRange(period: Period): { start: string; end: string } {
+function getDateRange(period: Period, customStart?: string, customEnd?: string): { start: string; end: string } {
   const now = new Date()
   let start: Date, end: Date
   switch (period) {
@@ -77,9 +79,16 @@ function getDateRange(period: Period): { start: string; end: string } {
     case 'last_month': start = new Date(now.getFullYear(), now.getMonth() - 1, 1); end = new Date(now.getFullYear(), now.getMonth(), 0); break
     case '90d': start = new Date(now); start.setDate(start.getDate() - 90); end = now; break
     case '12m': start = new Date(now); start.setFullYear(start.getFullYear() - 1); end = now; break
+    case 'current_year': start = new Date(now.getFullYear(), 0, 1); end = now; break
+    case 'custom':
+      if (customStart && customEnd) return { start: customStart, end: customEnd }
+      start = new Date(now.getFullYear(), now.getMonth(), 1); end = now; break
   }
   return { start: start.toISOString().split('T')[0], end: end.toISOString().split('T')[0] }
 }
+
+// Slugs de recomendação que devem usar média em períodos longos
+const RECOMENDACAO_SLUGS = ['recomendacao_templo_com_investidura', 'recomendacao_templo_sem_investidura']
 
 function processCards(rows: RpcRow[], period: Period): CardData[] {
   const byIndicator = new Map<string, RpcRow[]>()
@@ -91,14 +100,35 @@ function processCards(rows: RpcRow[], period: Period): CardData[] {
   const cards: CardData[] = []
   const periodLabel = PERIOD_LABELS[period]
 
+  // Períodos que abrangem múltiplos meses — recomendações mostram média
+  const isLongPeriod = ['90d', '12m', 'current_year', 'custom'].includes(period)
+
   for (const [indicatorId, wardRows] of byIndicator) {
     const first = wardRows[0]
-    const mainValue = wardRows.reduce((acc, r) => acc + r.computed_value, 0)
+    const slug = first.slug
+    const isRecomendacao = RECOMENDACAO_SLUGS.includes(slug)
 
+    // Valor principal: soma de todas as alas
+    let mainValue = wardRows.reduce((acc, r) => acc + r.computed_value, 0)
+
+    // Recomendações em períodos longos: calcular média entre as alas
+    // (cada ala retorna seu computed_value que já é a média do período via RPC)
+    // O mainValue é a soma das médias de cada ala — exibimos a soma e ajustamos o subtitle
     let subtitle = ''
-    if (first.aggregation_method === 'avg') subtitle = `Média (${periodLabel})`
-    else if (first.aggregation_method === 'sum' || first.aggregation_method === 'sum_yearly') subtitle = `Total (${periodLabel})`
-    else subtitle = 'Atual'
+    if (isRecomendacao && isLongPeriod) {
+      subtitle = `Média (${periodLabel})`
+    } else if (first.aggregation_method === 'avg') {
+      subtitle = `Média (${periodLabel})`
+    } else if (first.aggregation_method === 'sum' || first.aggregation_method === 'sum_yearly') {
+      subtitle = `Total (${periodLabel})`
+    } else {
+      subtitle = 'Atual'
+    }
+
+    // Batismo: sempre exibir como total do período
+    if (slug === 'batismo_converso') {
+      subtitle = `Total (${periodLabel})`
+    }
 
     let best = { name: '-', value: 0, score: -1 }
     let worst = { name: '-', value: 0, score: Infinity }
@@ -112,7 +142,7 @@ function processCards(rows: RpcRow[], period: Period): CardData[] {
     if (worst.score === Infinity) worst = { name: '-', value: 0, score: 0 }
 
     cards.push({
-      id: indicatorId, slug: first.slug, display_name: first.display_name,
+      id: indicatorId, slug, display_name: first.display_name,
       value: mainValue, subtitle, bestWard: best.name, bestValue: best.value,
       worstWard: worst.name, worstValue: worst.value,
     })
@@ -134,6 +164,9 @@ export default function DashboardPage() {
   const [selectedPeriod, setSelectedPeriod] = useState<Period>('current_month')
   const [selectedWardId, setSelectedWardId] = useState('')
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
+  const [customDateStart, setCustomDateStart] = useState('')
+  const [customDateEnd, setCustomDateEnd] = useState('')
+  const [showCustomDatePicker, setShowCustomDatePicker] = useState(false)
 
   // Gráfico
   const [chartWardId, setChartWardId] = useState(STAKE_ID)
@@ -177,14 +210,15 @@ export default function DashboardPage() {
   // ─── Carregar dados Visão Geral ───
   const loadDashboardData = useCallback(async () => {
     if (wards.length === 0) return
+    if (selectedPeriod === 'custom' && (!customDateStart || !customDateEnd)) return
     setLoading(true)
     try {
-      const { start, end } = getDateRange(selectedPeriod)
+      const { start, end } = getDateRange(selectedPeriod, customDateStart, customDateEnd)
       const { data, error } = await supabase.rpc('get_dashboard_data_v2', { p_start: start, p_end: end })
       if (!error) setRpcData(data || [])
     } catch (err) { console.error(err) }
     finally { setLoading(false) }
-  }, [supabase, selectedPeriod, wards])
+  }, [supabase, selectedPeriod, wards, customDateStart, customDateEnd])
 
   // ─── Carregar metas ───
   const loadTargets = useCallback(async () => {
@@ -383,13 +417,63 @@ export default function DashboardPage() {
         <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden p-4 md:p-8 hide-on-xray-print">
           <div className="flex flex-col md:flex-row items-center justify-between mb-6 gap-4 border-b border-slate-100 pb-4">
             <div className="flex items-center gap-2"><BarChart3 className="w-5 h-5 text-sky-600" /><h2 className="text-lg font-black text-slate-700">Visão Geral da Estaca</h2></div>
-            <div className="flex p-1 bg-slate-100 rounded-xl overflow-hidden w-full md:w-auto overflow-x-auto shrink-0">
-              {PERIOD_OPTIONS.map((p) => (
-                <button key={p} onClick={() => setSelectedPeriod(p)}
-                  className={`flex-1 md:flex-none px-4 py-2 rounded-lg text-[10px] md:text-sm font-black transition-all whitespace-nowrap ${selectedPeriod === p ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
-                  {PERIOD_LABELS[p]}
-                </button>
-              ))}
+            <div className="relative flex flex-col items-end gap-2 w-full md:w-auto">
+              <div className="flex p-1 bg-slate-100 rounded-xl overflow-hidden w-full md:w-auto overflow-x-auto shrink-0">
+                {PERIOD_OPTIONS.map((p) => (
+                  <button key={p} onClick={() => {
+                    if (p === 'custom') {
+                      setShowCustomDatePicker(true)
+                      setSelectedPeriod('custom')
+                    } else {
+                      setShowCustomDatePicker(false)
+                      setSelectedPeriod(p)
+                    }
+                  }}
+                    className={`flex-1 md:flex-none px-3 md:px-4 py-2 rounded-lg text-[10px] md:text-xs font-black transition-all whitespace-nowrap flex items-center gap-1 justify-center ${
+                      selectedPeriod === p ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+                    }`}>
+                    {p === 'custom' && <CalendarRange size={12} />}
+                    {PERIOD_LABELS[p]}
+                  </button>
+                ))}
+              </div>
+
+              {/* Date picker personalizado */}
+              {showCustomDatePicker && selectedPeriod === 'custom' && (
+                <div className="absolute top-full right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-slate-200 p-4 z-50 w-72 animate-in slide-in-from-top-2 fade-in duration-200">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Período Personalizado</span>
+                    <button onClick={() => setShowCustomDatePicker(false)} className="text-slate-300 hover:text-slate-500 p-1"><X size={14} /></button>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">De:</label>
+                      <input type="date" value={customDateStart}
+                        onChange={(e) => setCustomDateStart(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20 transition-all" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Até:</label>
+                      <input type="date" value={customDateEnd}
+                        onChange={(e) => setCustomDateEnd(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20 transition-all" />
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (customDateStart && customDateEnd) setShowCustomDatePicker(false)
+                      }}
+                      disabled={!customDateStart || !customDateEnd}
+                      className="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs py-2.5 rounded-xl transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed">
+                      Aplicar Filtro
+                    </button>
+                  </div>
+                  {customDateStart && customDateEnd && (
+                    <p className="text-[10px] text-slate-400 font-medium text-center mt-2">
+                      {new Date(customDateStart + 'T12:00:00').toLocaleDateString('pt-BR')} — {new Date(customDateEnd + 'T12:00:00').toLocaleDateString('pt-BR')}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
           <div className={`grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-6 ${loading ? 'opacity-50' : ''}`}>
@@ -480,8 +564,17 @@ export default function DashboardPage() {
               </select>
               <div className="flex p-1 bg-white border border-slate-200 rounded-lg overflow-x-auto shrink-0 max-w-full">
                 {PERIOD_OPTIONS.map((p) => (
-                  <button key={p} onClick={() => setSelectedPeriod(p)}
-                    className={`px-2 md:px-3 py-1.5 rounded-md text-[10px] md:text-xs font-black transition-all whitespace-nowrap ${selectedPeriod === p ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+                  <button key={p} onClick={() => {
+                    if (p === 'custom') {
+                      setShowCustomDatePicker(true)
+                      setSelectedPeriod('custom')
+                    } else {
+                      setShowCustomDatePicker(false)
+                      setSelectedPeriod(p)
+                    }
+                  }}
+                    className={`px-2 md:px-3 py-1.5 rounded-md text-[10px] md:text-xs font-black transition-all whitespace-nowrap flex items-center gap-1 ${selectedPeriod === p ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
+                    {p === 'custom' && <CalendarRange size={10} />}
                     {PERIOD_LABELS[p]}
                   </button>
                 ))}
