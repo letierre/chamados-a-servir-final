@@ -542,27 +542,34 @@ export default function DashboardPage() {
 
         {/* BLOCO 3: RAIO-X — com Estaca */}
         <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden print:overflow-visible xray-section print:shadow-none print:border-none">
-          <div className="p-4 md:p-8 bg-slate-50/50 border-b border-slate-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 hide-on-xray-print">
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600 print:hidden"><Search className="w-5 h-5" /></div>
-              <h2 className="text-lg md:text-xl font-black text-slate-800">Raio-X da Unidade</h2>
+          <div className="p-4 md:px-8 md:pt-6 md:pb-0 bg-slate-50/50 border-b border-slate-100 hide-on-xray-print">
+            {/* Linha 1: Título + Ações + Select */}
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-3 shrink-0">
+                <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600 print:hidden"><Search className="w-5 h-5" /></div>
+                <h2 className="text-lg md:text-xl font-black text-slate-800">Raio-X da Unidade</h2>
+              </div>
+              <div className="flex items-center gap-2 print:hidden">
+                <button onClick={handleGenerateAI} disabled={aiLoading || isTyping}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] md:text-xs font-bold rounded-lg transition-colors shadow-sm disabled:opacity-50 shrink-0">
+                  {aiLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                  <span className="hidden sm:inline">Análise IA</span><span className="sm:hidden">IA</span>
+                </button>
+                <button onClick={handlePrintXRay}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white text-[10px] md:text-xs font-bold rounded-lg transition-colors shadow-sm shrink-0">
+                  <Printer size={14} /><span className="hidden sm:inline">Exportar Raio-X</span><span className="sm:hidden">PDF</span>
+                </button>
+                <select value={selectedWardId} onChange={(e) => setSelectedWardId(e.target.value)}
+                  className="bg-white border border-slate-300 text-slate-700 text-xs md:text-sm rounded-lg focus:ring-sky-500 focus:border-sky-500 p-2 font-bold min-w-[140px] shrink-0">
+                  <option value={STAKE_ID}>Estaca (Todas)</option>
+                  {wards.map((w) => (<option key={w.id} value={w.id}>{w.name}</option>))}
+                </select>
+              </div>
             </div>
-            <div className="flex flex-wrap md:flex-nowrap items-center gap-2 md:gap-3 w-full justify-start md:justify-end print:hidden">
-              <button onClick={handleGenerateAI} disabled={aiLoading || isTyping}
-                className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] md:text-xs font-bold rounded-lg transition-colors shadow-sm disabled:opacity-50 shrink-0">
-                {aiLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                <span className="hidden sm:inline">Análise IA</span><span className="sm:hidden">IA</span>
-              </button>
-              <button onClick={handlePrintXRay}
-                className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white text-[10px] md:text-xs font-bold rounded-lg transition-colors shadow-sm shrink-0">
-                <Printer size={14} /><span className="hidden sm:inline">Exportar Raio-X</span><span className="sm:hidden">PDF</span>
-              </button>
-              <select value={selectedWardId} onChange={(e) => setSelectedWardId(e.target.value)}
-                className="bg-white border border-slate-300 text-slate-700 text-xs md:text-sm rounded-lg focus:ring-sky-500 focus:border-sky-500 p-2 font-bold min-w-[120px] max-w-[160px] md:max-w-[200px] shrink-0">
-                <option value={STAKE_ID}>📊 Estaca (Todas)</option>
-                {wards.map((w) => (<option key={w.id} value={w.id}>{w.name}</option>))}
-              </select>
-              <div className="flex p-1 bg-white border border-slate-200 rounded-lg overflow-x-auto shrink-0 max-w-full">
+
+            {/* Linha 2: Filtros de período — largura total, alinhados */}
+            <div className="relative print:hidden pb-4">
+              <div className="flex p-1 bg-slate-100 rounded-xl w-full overflow-x-auto">
                 {PERIOD_OPTIONS.map((p) => (
                   <button key={p} onClick={() => {
                     if (p === 'custom') {
@@ -573,12 +580,46 @@ export default function DashboardPage() {
                       setSelectedPeriod(p)
                     }
                   }}
-                    className={`px-2 md:px-3 py-1.5 rounded-md text-[10px] md:text-xs font-black transition-all whitespace-nowrap flex items-center gap-1 ${selectedPeriod === p ? 'bg-slate-800 text-white' : 'text-slate-400 hover:bg-slate-50'}`}>
-                    {p === 'custom' && <CalendarRange size={10} />}
+                    className={`flex-1 px-2 md:px-4 py-2 rounded-lg text-[10px] md:text-xs font-black transition-all whitespace-nowrap flex items-center gap-1 justify-center ${
+                      selectedPeriod === p ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+                    }`}>
+                    {p === 'custom' && <CalendarRange size={11} />}
                     {PERIOD_LABELS[p]}
                   </button>
                 ))}
               </div>
+
+              {/* Date picker inline para custom */}
+              {showCustomDatePicker && selectedPeriod === 'custom' && (
+                <div className="absolute right-0 top-full mt-1 bg-white rounded-2xl shadow-2xl border border-slate-200 p-4 z-50 w-72 animate-in slide-in-from-top-2 fade-in duration-200">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-xs font-black text-slate-700 uppercase tracking-wider">Período Personalizado</span>
+                    <button onClick={() => setShowCustomDatePicker(false)} className="text-slate-300 hover:text-slate-500 p-1"><X size={14} /></button>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">De:</label>
+                      <input type="date" value={customDateStart} onChange={(e) => setCustomDateStart(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20 transition-all" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Até:</label>
+                      <input type="date" value={customDateEnd} onChange={(e) => setCustomDateEnd(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-400/20 transition-all" />
+                    </div>
+                    <button onClick={() => { if (customDateStart && customDateEnd) setShowCustomDatePicker(false) }}
+                      disabled={!customDateStart || !customDateEnd}
+                      className="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs py-2.5 rounded-xl transition-all shadow-sm disabled:opacity-40 disabled:cursor-not-allowed">
+                      Aplicar Filtro
+                    </button>
+                  </div>
+                  {customDateStart && customDateEnd && (
+                    <p className="text-[10px] text-slate-400 font-medium text-center mt-2">
+                      {new Date(customDateStart + 'T12:00:00').toLocaleDateString('pt-BR')} — {new Date(customDateEnd + 'T12:00:00').toLocaleDateString('pt-BR')}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
