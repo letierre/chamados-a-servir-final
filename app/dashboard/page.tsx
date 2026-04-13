@@ -168,6 +168,9 @@ export default function DashboardPage() {
   const [customDateEnd, setCustomDateEnd] = useState('')
   const [showCustomDatePicker, setShowCustomDatePicker] = useState(false)
 
+  // Raio-X por Indicador
+  const [xrayIndicatorId, setXrayIndicatorId] = useState('')
+
   // Gráfico
   const [chartWardId, setChartWardId] = useState(STAKE_ID)
   const [chartIndicatorId, setChartIndicatorId] = useState('')
@@ -196,7 +199,10 @@ export default function DashboardPage() {
     ])
     if (indRes.data) {
       setIndicators(indRes.data)
-      if (indRes.data.length > 0) setChartIndicatorId(indRes.data[0].id)
+      if (indRes.data.length > 0) {
+        setChartIndicatorId(indRes.data[0].id)
+        setXrayIndicatorId(indRes.data[0].id)
+      }
     }
     if (wardRes.data) {
       setWards(wardRes.data)
@@ -364,6 +370,28 @@ export default function DashboardPage() {
       return { id: ind.id, slug: ind.slug, display_name: ind.display_name, value, target, gap, progress }
     })
   }, [rpcData, selectedWardId, indicators, targetMatrix, stakeTotals])
+
+  // Raio-X por Indicador — todas as alas para um indicador selecionado
+  type IndicatorXRayItem = {
+    wardId: string; wardName: string; membership: number
+    value: number; target: number; gap: number; progress: number
+  }
+  const indicatorXRayData: IndicatorXRayItem[] = useMemo(() => {
+    if (!xrayIndicatorId || wards.length === 0) return []
+    const selectedInd = indicators.find(i => i.id === xrayIndicatorId)
+    if (!selectedInd) return []
+
+    return wards.map(ward => {
+      const row = rpcData.find(r => r.ward_id === ward.id && r.indicator_id === xrayIndicatorId)
+      const value = row?.computed_value || 0
+      const target = targetMatrix[ward.id]?.[xrayIndicatorId] || 0
+      const gap = target > 0 ? Math.max(0, target - value) : 0
+      const progress = target > 0 ? Math.min(100, Math.round((value / target) * 100)) : 0
+      return { wardId: ward.id, wardName: ward.name, membership: ward.membership_count || 0, value, target, gap, progress }
+    }).sort((a, b) => b.progress - a.progress) // Ordenar pelo progresso (melhor primeiro)
+  }, [rpcData, xrayIndicatorId, wards, indicators, targetMatrix])
+
+  const xrayIndicatorSlug = indicators.find(i => i.id === xrayIndicatorId)?.slug || ''
 
   // ─── Ações ───
   const handlePrintXRay = () => {
@@ -715,7 +743,132 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* BLOCO 4: METAS */}
+        {/* BLOCO 4: RAIO-X POR INDICADOR */}
+        <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden hide-on-xray-print">
+          <div className="p-4 md:px-8 md:pt-6 md:pb-0 bg-emerald-50/30 border-b border-slate-100">
+            {/* Linha 1: Título + Select */}
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 pb-4">
+              <div className="flex items-center gap-3 shrink-0">
+                <div className="p-2 bg-emerald-100 rounded-lg text-emerald-600"><BarChart3 className="w-5 h-5" /></div>
+                <div>
+                  <h2 className="text-lg md:text-xl font-black text-slate-800">Raio-X por Indicador</h2>
+                  <p className="text-[10px] md:text-xs font-bold text-slate-400 uppercase">Comparativo entre unidades</p>
+                </div>
+              </div>
+              <select value={xrayIndicatorId} onChange={(e) => setXrayIndicatorId(e.target.value)}
+                className="bg-white border border-slate-300 text-slate-700 text-xs md:text-sm rounded-lg focus:ring-emerald-500 focus:border-emerald-500 p-2.5 font-bold min-w-[200px] shadow-sm">
+                {indicators.map((i) => (<option key={i.id} value={i.id}>{i.display_name}</option>))}
+              </select>
+            </div>
+          </div>
+
+          <div className="p-4 md:p-8">
+            {indicatorXRayData.length === 0 ? (
+              <div className="text-center py-10 text-slate-400 text-sm font-medium">Selecione um indicador para comparar.</div>
+            ) : (
+              <>
+                {/* Estaca total */}
+                {(() => {
+                  const stakeValue = indicatorXRayData.reduce((s, w) => s + w.value, 0)
+                  const stakeTarget = indicatorXRayData.reduce((s, w) => s + w.target, 0)
+                  const stakeProgress = stakeTarget > 0 ? Math.min(100, Math.round((stakeValue / stakeTarget) * 100)) : 0
+                  const stakeGap = stakeTarget > 0 ? Math.max(0, stakeTarget - stakeValue) : 0
+                  return (
+                    <div className="bg-slate-800 rounded-2xl p-5 mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                      <div className="flex items-center gap-4">
+                        <div className="p-2.5 bg-white/10 rounded-xl">
+                          {ICON_MAP[xrayIndicatorSlug] || <BarChart3 className="w-6 h-6 text-white" />}
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total da Estaca</p>
+                          <p className="text-3xl md:text-4xl font-black text-white">{stakeValue.toLocaleString('pt-BR')}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-6 md:gap-8">
+                        <div className="text-right">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase">Meta</p>
+                          <p className="text-xl font-black text-white">{stakeTarget.toLocaleString('pt-BR')}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase">Progresso</p>
+                          <p className={`text-xl font-black ${stakeProgress >= 100 ? 'text-emerald-400' : 'text-sky-400'}`}>{stakeProgress}%</p>
+                        </div>
+                        {stakeGap > 0 && (
+                          <div className="text-right">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase">Faltam</p>
+                            <p className="text-xl font-black text-rose-400">{stakeGap}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* Cards por unidade */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {indicatorXRayData.map((ward, idx) => {
+                    const isTop = idx === 0
+                    const isBottom = idx === indicatorXRayData.length - 1
+                    return (
+                      <div key={ward.wardId} className={`rounded-xl p-4 border relative overflow-hidden transition-all ${
+                        isTop ? 'bg-emerald-50 border-emerald-200' :
+                        isBottom ? 'bg-rose-50 border-rose-200' :
+                        'bg-slate-50 border-slate-100'
+                      }`}>
+                        {/* Badge de posição */}
+                        <div className={`absolute top-3 right-3 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black ${
+                          isTop ? 'bg-emerald-600 text-white' :
+                          isBottom ? 'bg-rose-500 text-white' :
+                          'bg-slate-200 text-slate-500'
+                        }`}>
+                          {idx + 1}
+                        </div>
+
+                        {/* Nome da ala */}
+                        <div className="mb-3 pr-8">
+                          <span className={`text-[10px] font-black uppercase tracking-wider ${
+                            isTop ? 'text-emerald-700' : isBottom ? 'text-rose-700' : 'text-slate-500'
+                          }`}>{ward.wardName}</span>
+                          <span className="text-[9px] text-slate-400 block">{ward.membership} membros</span>
+                        </div>
+
+                        {/* Valor */}
+                        <div className="flex items-baseline justify-between mb-2">
+                          <span className="text-2xl font-black text-slate-800">{ward.value}</span>
+                          <div className="text-right">
+                            <span className="block text-[10px] text-slate-400 uppercase font-bold">Meta</span>
+                            <span className="text-sm font-bold text-slate-600">{ward.target}</span>
+                          </div>
+                        </div>
+
+                        {/* Barra de progresso */}
+                        <div className="w-full bg-slate-200 rounded-full h-1.5 mb-2">
+                          <div className={`h-1.5 rounded-full ${
+                            ward.progress >= 100 ? 'bg-emerald-500' :
+                            isBottom ? 'bg-rose-500' : 'bg-sky-500'
+                          }`} style={{ width: `${ward.progress}%` }}></div>
+                        </div>
+
+                        {/* Footer */}
+                        <div className="flex justify-between items-center text-[10px] font-bold">
+                          <span className={
+                            ward.progress >= 100 ? 'text-emerald-600' :
+                            isBottom ? 'text-rose-500' : 'text-sky-600'
+                          }>{ward.progress}%</span>
+                          {ward.target > 0 && ward.gap > 0 ? (
+                            <span className="text-rose-500">Faltam {ward.gap}</span>
+                          ) : (ward.target > 0 && <span className="text-emerald-500">Meta Batida!</span>)}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+
+        {/* BLOCO 5: METAS */}
         <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden hide-on-xray-print">
           <div className="p-4 md:p-8 border-b border-slate-100 flex flex-col md:flex-row items-center justify-between bg-slate-50/50 gap-4">
             <div className="flex items-center gap-3 w-full md:w-auto">
