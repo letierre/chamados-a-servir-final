@@ -214,8 +214,45 @@ export default function DashboardPage() {
     setLoading(true)
     try {
       const { start, end } = getDateRange(selectedPeriod, customDateStart, customDateEnd)
-      const { data, error } = await supabase.rpc('get_dashboard_data_v2', { p_start: start, p_end: end })
-      if (!error) setRpcData(data || [])
+
+      // Buscar dados do RPC e contagem real de batismos nominais em paralelo
+      const [rpcRes, baptismRes] = await Promise.all([
+        supabase.rpc('get_dashboard_data_v2', { p_start: start, p_end: end }),
+        supabase.from('baptism_records')
+          .select('ward_id', { count: 'exact' })
+          .gte('week_start', start)
+          .lte('week_start', end),
+      ])
+
+      if (!rpcRes.error && rpcRes.data) {
+        let rows: RpcRow[] = rpcRes.data
+
+        // Corrigir batismo: substituir computed_value pelo total real de baptism_records
+        if (baptismRes.count !== null && baptismRes.count !== undefined) {
+          // Contar por ala
+          const { data: baptismByWard } = await supabase
+            .from('baptism_records')
+            .select('ward_id')
+            .gte('week_start', start)
+            .lte('week_start', end)
+
+          if (baptismByWard) {
+            const wardCounts = new Map<string, number>()
+            baptismByWard.forEach((r: { ward_id: string }) => {
+              wardCounts.set(r.ward_id, (wardCounts.get(r.ward_id) || 0) + 1)
+            })
+
+            rows = rows.map(row => {
+              if (row.slug === 'batismo_converso') {
+                return { ...row, computed_value: wardCounts.get(row.ward_id) || 0 }
+              }
+              return row
+            })
+          }
+        }
+
+        setRpcData(rows)
+      }
     } catch (err) { console.error(err) }
     finally { setLoading(false) }
   }, [supabase, selectedPeriod, wards, customDateStart, customDateEnd])
