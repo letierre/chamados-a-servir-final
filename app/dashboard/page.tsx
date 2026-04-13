@@ -747,7 +747,7 @@ export default function DashboardPage() {
         <section className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm md:shadow-xl overflow-hidden hide-on-xray-print">
           <div className="p-4 md:px-8 md:pt-6 md:pb-0 bg-emerald-50/30 border-b border-slate-100">
             {/* Linha 1: Título + Select */}
-            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 pb-4">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 mb-4">
               <div className="flex items-center gap-3 shrink-0">
                 <div className="p-2 bg-emerald-100 rounded-lg text-emerald-600"><BarChart3 className="w-5 h-5" /></div>
                 <div>
@@ -759,6 +759,29 @@ export default function DashboardPage() {
                 className="bg-white border border-slate-300 text-slate-700 text-xs md:text-sm rounded-lg focus:ring-emerald-500 focus:border-emerald-500 p-2.5 font-bold min-w-[200px] shadow-sm">
                 {indicators.map((i) => (<option key={i.id} value={i.id}>{i.display_name}</option>))}
               </select>
+            </div>
+
+            {/* Linha 2: Filtros de período */}
+            <div className="relative pb-4">
+              <div className="flex p-1 bg-slate-100 rounded-xl w-full overflow-x-auto">
+                {PERIOD_OPTIONS.map((p) => (
+                  <button key={p} onClick={() => {
+                    if (p === 'custom') {
+                      setShowCustomDatePicker(true)
+                      setSelectedPeriod('custom')
+                    } else {
+                      setShowCustomDatePicker(false)
+                      setSelectedPeriod(p)
+                    }
+                  }}
+                    className={`flex-1 px-2 md:px-4 py-2 rounded-lg text-[10px] md:text-xs font-black transition-all whitespace-nowrap flex items-center gap-1 justify-center ${
+                      selectedPeriod === p ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+                    }`}>
+                    {p === 'custom' && <CalendarRange size={11} />}
+                    {PERIOD_LABELS[p]}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
