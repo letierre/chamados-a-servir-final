@@ -259,6 +259,9 @@ export default function RelatoriosPage() {
           <p className="text-sm text-gray-500 mt-1">
             Configure envios automáticos dos indicadores da estaca via WhatsApp.
           </p>
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mt-2 inline-block">
+            ⚠️ No plano atual, o envio acontece 1x/dia às 08:00 (America/Sao_Paulo). O horário configurado é informativo.
+          </p>
         </div>
         <button
           onClick={openNew}

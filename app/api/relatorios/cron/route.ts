@@ -27,19 +27,29 @@ function saoPauloNow(): { hour: number; minute: number; dayOfMonth: number; dayO
   }
 }
 
+// Vercel Cron (Hobby) roda 1x/dia. Decidimos por calendário: o cron só respeita
+// frequência (diário/semanal/mensal) e dia — o campo send_time é apenas preferência
+// visual; o envio acontece no horário fixo do cron (08:00 America/Sao_Paulo).
 function shouldSend(cfg: ReportConfig, now: ReturnType<typeof saoPauloNow>): boolean {
-  const [hh] = (cfg.send_time || '00:00').split(':').map(Number)
-  if (now.hour !== hh) return false
-
-  if (cfg.frequency === 'daily') return true
+  if (cfg.frequency === 'daily')   return true
   if (cfg.frequency === 'weekly')  return cfg.send_day === now.dayOfWeek
   if (cfg.frequency === 'monthly') return cfg.send_day === now.dayOfMonth
   return false
 }
 
+// Retorna 'YYYY-MM-DD' de uma data ISO no fuso America/Sao_Paulo
+function saoPauloDate(iso: string | null): string | null {
+  if (!iso) return null
+  return new Date(iso).toLocaleString('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  })
+}
+
 async function runCron() {
   const supabase = createAdminClient()
   const now = saoPauloNow()
+  const today = now.iso.slice(0, 10)
 
   const { data, error } = await supabase
     .from('report_configs')
@@ -50,23 +60,16 @@ async function runCron() {
   const configs = (data || []) as ReportConfig[]
 
   const results: Array<{ id: string; name: string; status: string }> = []
-  const today = now.iso.slice(0, 10)
 
   for (const cfg of configs) {
     if (!shouldSend(cfg, now)) continue
 
-    // Dedup: se já enviou nesta hora, pula
+    // Dedup: se já enviou hoje (fuso SP), pula
     const rawCfg = cfg as ReportConfig & { last_sent_at?: string | null }
-    if (rawCfg.last_sent_at) {
-      const lastHour = new Date(rawCfg.last_sent_at).toLocaleString('en-CA', {
-        timeZone: 'America/Sao_Paulo',
-        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false,
-      })
-      const nowHour = `${today}, ${String(now.hour).padStart(2, '0')}`
-      if (lastHour.startsWith(nowHour)) {
-        results.push({ id: cfg.id, name: cfg.name, status: 'skipped-already-sent' })
-        continue
-      }
+    const lastSentDay = saoPauloDate(rawCfg.last_sent_at ?? null)
+    if (lastSentDay === today) {
+      results.push({ id: cfg.id, name: cfg.name, status: 'skipped-already-sent-today' })
+      continue
     }
 
     try {

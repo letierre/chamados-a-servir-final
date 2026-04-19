@@ -32,15 +32,17 @@ Isso cria a tabela `report_configs` com RLS ligado (liberado para usuários aute
 
 ## 3. Agendamento (Vercel Cron)
 
-O arquivo `vercel.json` na raiz já configura um cron que chama `/api/relatorios/cron` **de hora em hora**.
+O arquivo `vercel.json` na raiz configura um cron que chama `/api/relatorios/cron` **1x/dia às 08:00 (America/Sao_Paulo)** — compatível com o plano Hobby do Vercel (mínimo diário).
 
-No deploy Vercel, **adicione o header Authorization automático** na aba *Settings → Cron Jobs* (o Vercel envia `Bearer $CRON_SECRET` automaticamente quando a variável `CRON_SECRET` existe).
+O endpoint itera todas as configs ativas e decide por calendário:
 
-- **daily:** dispara todo dia na hora configurada
-- **weekly:** dispara na hora configurada, no dia da semana escolhido
-- **monthly:** dispara na hora configurada, no dia do mês escolhido
+- **daily:** dispara todo dia
+- **weekly:** dispara se o dia da semana atual bater com `send_day`
+- **monthly:** dispara se o dia do mês atual bater com `send_day`
 
-Fuso horário: **America/Sao_Paulo** (calculado no endpoint, independente do fuso do Vercel).
+Dedup: nunca envia duas vezes no mesmo dia (fuso SP).
+
+> 💡 O campo `send_time` na UI é apenas preferência visual no Hobby — o envio real acontece no horário fixo do cron. Para horários específicos, migrar para plano Pro e mudar `vercel.json` para a cadência desejada (ex: `0 * * * *` para hourly).
 
 ## 4. Testar manualmente
 
