@@ -104,7 +104,7 @@ async function buildSummaryMessage(
   // 1) Dados do RPC + contagem nominal de batismos (mesma lógica do dashboard)
   const [rpcRes, baptismByWardRes] = await Promise.all([
     supabase.rpc('get_dashboard_data_v2', { p_start: start, p_end: end }),
-    supabase.from('baptism_records').select('ward_id').gte('week_start', start).lte('week_start', end),
+    supabase.from('baptism_records').select('ward_id').gte('baptism_date', start).lte('baptism_date', end),
   ])
 
   if (rpcRes.error) throw new Error(`RPC get_dashboard_data_v2: ${rpcRes.error.message}`)
@@ -385,12 +385,12 @@ async function fetchNominalRecords(
   if (source === 'baptism') {
     const res = await supabase
       .from('baptism_records')
-      .select('person_name, birth_date, gender, ward_id, week_start')
-      .gte('week_start', start).lte('week_start', end)
+      .select('person_name, birth_date, gender, ward_id, baptism_date')
+      .gte('baptism_date', start).lte('baptism_date', end)
     return {
       error: res.error,
-      data: (res.data as Array<{ person_name: string; birth_date: string | null; gender: string | null; ward_id: string; week_start: string }> | null)
-        ?.map(r => ({ ...r, date_ref: r.week_start })) ?? null,
+      data: (res.data as Array<{ person_name: string; birth_date: string | null; gender: string | null; ward_id: string; baptism_date: string }> | null)
+        ?.map(r => ({ ...r, date_ref: r.baptism_date })) ?? null,
     }
   }
   if (source === 'returning') {

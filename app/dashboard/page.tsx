@@ -222,12 +222,13 @@ export default function DashboardPage() {
       const { start, end } = getDateRange(selectedPeriod, customDateStart, customDateEnd)
 
       // Buscar dados do RPC e contagem real de batismos nominais em paralelo
+      // Filtramos por baptism_date (data real do batismo), não week_start (semana de lançamento)
       const [rpcRes, baptismRes] = await Promise.all([
         supabase.rpc('get_dashboard_data_v2', { p_start: start, p_end: end }),
         supabase.from('baptism_records')
           .select('ward_id', { count: 'exact' })
-          .gte('week_start', start)
-          .lte('week_start', end),
+          .gte('baptism_date', start)
+          .lte('baptism_date', end),
       ])
 
       if (!rpcRes.error && rpcRes.data) {
@@ -239,8 +240,8 @@ export default function DashboardPage() {
           const { data: baptismByWard } = await supabase
             .from('baptism_records')
             .select('ward_id')
-            .gte('week_start', start)
-            .lte('week_start', end)
+            .gte('baptism_date', start)
+            .lte('baptism_date', end)
 
           if (baptismByWard) {
             const wardCounts = new Map<string, number>()

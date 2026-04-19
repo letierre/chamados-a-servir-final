@@ -116,6 +116,7 @@ type NominalPerson = {
   name: string
   birth_date: string
   gender: string
+  baptism_date: string
 }
 
 // Tipo para missionário
@@ -209,7 +210,7 @@ export default function LancamentosPage() {
   const [membershipCount, setMembershipCount] = useState('')
 
   // Nominais: batismo e retornando
-  const [nominalPersons, setNominalPersons] = useState<NominalPerson[]>([{ name: '', birth_date: '', gender: '' }])
+  const [nominalPersons, setNominalPersons] = useState<NominalPerson[]>([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
 
   // Nominais: missionários
   const [missionaries, setMissionaries] = useState<MissionaryPerson[]>([])
@@ -272,7 +273,7 @@ export default function LancamentosPage() {
     setFormError(null)
     setValueRecomSem('')
     setMembershipCount('')
-    setNominalPersons([{ name: '', birth_date: '', gender: '' }])
+    setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
     setMissionaries([])
     if (selectedWard && isMembrosParticipantes) {
       setMembershipCount(String(selectedWard.membership_count || ''))
@@ -288,14 +289,16 @@ export default function LancamentosPage() {
         const { data } = await supabase.rpc('get_baptism_names', { p_ward_id: wardId, p_week_start: weekStart })
         if (data && data.length > 0) {
           setNominalPersons(data.map((d: any) => ({
-            name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || ''
+            name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '',
+            baptism_date: d.baptism_date || '',
           })))
         }
       } else if (isRetornando) {
         const { data } = await supabase.rpc('get_returning_names', { p_ward_id: wardId, p_week_start: weekStart })
         if (data && data.length > 0) {
           setNominalPersons(data.map((d: any) => ({
-            name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || ''
+            name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '',
+            baptism_date: '',
           })))
         }
       }
@@ -374,7 +377,7 @@ export default function LancamentosPage() {
   }, [router, supabase, fetchRecentEntries])
 
   // ─── Helpers nominais ───
-  function addNominalPerson() { setNominalPersons(prev => [...prev, { name: '', birth_date: '', gender: '' }]) }
+  function addNominalPerson() { setNominalPersons(prev => [...prev, { name: '', birth_date: '', gender: '', baptism_date: '' }]) }
   function removeNominalPerson(i: number) { setNominalPersons(prev => prev.filter((_, idx) => idx !== i)) }
   function updateNominalPerson(i: number, field: keyof NominalPerson, val: string) {
     setNominalPersons(prev => prev.map((p, idx) => idx === i ? { ...p, [field]: val } : p))
@@ -487,7 +490,9 @@ export default function LancamentosPage() {
         const { error: bErr } = await supabase.from('baptism_records').insert(
           validPersons.map(p => ({
             ward_id: wardId, week_start: weekStart, person_name: p.name.trim(),
-            birth_date: p.birth_date || null, gender: p.gender || null, created_by: userId,
+            birth_date: p.birth_date || null, gender: p.gender || null,
+            baptism_date: p.baptism_date || weekStart,
+            created_by: userId,
           }))
         )
         if (bErr) { setFormError('Erro ao salvar nomes: ' + bErr.message); return }
@@ -502,7 +507,7 @@ export default function LancamentosPage() {
         if (wErr) { setFormError('Erro ao salvar contagem: ' + wErr.message); return }
 
         setToast({ type: 'success', text: `${validPersons.length} batismo(s) registrado(s)!` })
-        setNominalPersons([{ name: '', birth_date: '', gender: '' }])
+        setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
         await fetchRecentEntries()
         await loadWeeklyStatus()
         return
@@ -535,7 +540,7 @@ export default function LancamentosPage() {
         if (wErr) { setFormError('Erro ao salvar contagem: ' + wErr.message); return }
 
         setToast({ type: 'success', text: `${validPersons.length} membro(s) retornando registrado(s)!` })
-        setNominalPersons([{ name: '', birth_date: '', gender: '' }])
+        setNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }])
         await fetchRecentEntries()
         await loadWeeklyStatus()
         return
@@ -1097,16 +1102,30 @@ export default function LancamentosPage() {
                               </button>
                             )}
                           </div>
-                          <div className="grid grid-cols-2 gap-2 ml-7">
-                            <input type="date" value={person.birth_date} onChange={e => updateNominalPerson(index, 'birth_date', e.target.value)}
-                              className="rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] font-medium text-slate-600 outline-none focus:border-sky-400"
-                              title="Data de nascimento" />
-                            <select value={person.gender} onChange={e => updateNominalPerson(index, 'gender', e.target.value)}
-                              className="rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] font-medium text-slate-600 outline-none focus:border-sky-400">
-                              <option value="">Gênero</option>
-                              <option value="M">Masculino</option>
-                              <option value="F">Feminino</option>
-                            </select>
+                          <div className={`grid ${isBatismo ? 'grid-cols-3' : 'grid-cols-2'} gap-2 ml-7`}>
+                            {isBatismo && (
+                              <div className="flex flex-col">
+                                <span className="text-[9px] font-bold text-emerald-600 uppercase mb-0.5 tracking-wider">Data do batismo</span>
+                                <input type="date" value={person.baptism_date} onChange={e => updateNominalPerson(index, 'baptism_date', e.target.value)}
+                                  className="rounded-lg border border-emerald-200 px-2 py-1.5 text-[11px] font-medium text-emerald-700 outline-none focus:border-emerald-400"
+                                  title="Data do batismo" />
+                              </div>
+                            )}
+                            <div className="flex flex-col">
+                              <span className="text-[9px] font-bold text-slate-500 uppercase mb-0.5 tracking-wider">Nascimento</span>
+                              <input type="date" value={person.birth_date} onChange={e => updateNominalPerson(index, 'birth_date', e.target.value)}
+                                className="rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] font-medium text-slate-600 outline-none focus:border-sky-400"
+                                title="Data de nascimento" />
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-[9px] font-bold text-slate-500 uppercase mb-0.5 tracking-wider">Gênero</span>
+                              <select value={person.gender} onChange={e => updateNominalPerson(index, 'gender', e.target.value)}
+                                className="rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] font-medium text-slate-600 outline-none focus:border-sky-400">
+                                <option value="">—</option>
+                                <option value="M">Masculino</option>
+                                <option value="F">Feminino</option>
+                              </select>
+                            </div>
                           </div>
                         </div>
                       ))}

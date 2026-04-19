@@ -31,13 +31,14 @@ type HistoryEntry = {
 type DateRange = { start: string; end: string }
 type Toast = { type: 'success' | 'error'; text: string } | null
 
-type NominalPerson = { name: string; birth_date: string; gender: string }
+type NominalPerson = { name: string; birth_date: string; gender: string; baptism_date?: string }
 type MissionaryPerson = { id?: string; name: string; gender: string; mission_start_date: string; mission_end_date: string; is_active?: boolean }
 
 type Tab = 'lancamentos' | 'batismos' | 'retornando' | 'missionarios'
 
 type BaptismRecord = {
   id: string; person_name: string; birth_date: string | null; gender: string | null
+  baptism_date: string | null
   week_start: string; ward_id: string; ward_name?: string; created_at?: string
 }
 type ReturningRecord = {
@@ -183,7 +184,7 @@ export default function HistoricoPage() {
   }
 
   // Nominal person helpers
-  function addNominalPerson() { setEditNominalPersons(prev => [...prev, { name: '', birth_date: '', gender: '' }]) }
+  function addNominalPerson() { setEditNominalPersons(prev => [...prev, { name: '', birth_date: '', gender: '', baptism_date: '' }]) }
   function removeNominalPerson(i: number) { setEditNominalPersons(prev => prev.filter((_, idx) => idx !== i)) }
   function updateNominalPerson(i: number, field: keyof NominalPerson, val: string) {
     setEditNominalPersons(prev => prev.map((p, idx) => idx === i ? { ...p, [field]: val } : p))
@@ -202,8 +203,8 @@ export default function HistoricoPage() {
     try {
       let query = supabase
         .from('baptism_records')
-        .select('id, person_name, birth_date, gender, week_start, ward_id, created_at, wards!inner(name)')
-        .order('week_start', { ascending: false })
+        .select('id, person_name, birth_date, gender, baptism_date, week_start, ward_id, created_at, wards!inner(name)')
+        .order('baptism_date', { ascending: false })
       if (nominalWardFilter) query = query.eq('ward_id', nominalWardFilter)
       const { data } = await query
       setBaptismList((data || []).map((d: any) => ({ ...d, ward_name: d.wards?.name })))
@@ -312,13 +313,13 @@ export default function HistoricoPage() {
       if (slug === 'batismo_converso') {
         const { data } = await supabase.rpc('get_baptism_names', { p_ward_id: row.wards.id, p_week_start: row.week_start })
         if (data && data.length > 0) {
-          setEditNominalPersons(data.map((d: any) => ({ name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '' })))
-        } else { setEditNominalPersons([{ name: '', birth_date: '', gender: '' }]) }
+          setEditNominalPersons(data.map((d: any) => ({ name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '', baptism_date: d.baptism_date || '' })))
+        } else { setEditNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }]) }
       } else if (slug === 'membros_retornando_a_igreja') {
         const { data } = await supabase.rpc('get_returning_names', { p_ward_id: row.wards.id, p_week_start: row.week_start })
         if (data && data.length > 0) {
-          setEditNominalPersons(data.map((d: any) => ({ name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '' })))
-        } else { setEditNominalPersons([{ name: '', birth_date: '', gender: '' }]) }
+          setEditNominalPersons(data.map((d: any) => ({ name: d.person_name, birth_date: d.birth_date || '', gender: d.gender || '', baptism_date: '' })))
+        } else { setEditNominalPersons([{ name: '', birth_date: '', gender: '', baptism_date: '' }]) }
       } else if (slug === 'missionario_servindo_missao_do_brasil') {
         const { data } = await supabase.rpc('get_missionary_names', { p_ward_id: row.wards.id })
         if (data && data.length > 0) {
@@ -362,11 +363,13 @@ export default function HistoricoPage() {
           if (editForm.week_start !== editingRow.week_start) {
             await supabase.from(table).delete().eq('ward_id', editingRow.wards.id).eq('week_start', editingRow.week_start)
           }
+          const isBatism = slug === 'batismo_converso'
           await supabase.from(table).insert(
             validPersons.map(p => ({
               ward_id: editingRow.wards.id, week_start: editForm.week_start,
               person_name: p.name.trim(), birth_date: p.birth_date || null,
               gender: p.gender || null, created_by: userId,
+              ...(isBatism ? { baptism_date: p.baptism_date || editForm.week_start } : {}),
             }))
           )
         }
@@ -816,7 +819,7 @@ export default function HistoricoPage() {
                     <th className="p-5 text-xs font-black text-emerald-700 uppercase tracking-wider"><div className="flex items-center gap-2"><Building2 size={14} /> Unidade</div></th>
                     <th className="p-5 text-xs font-black text-emerald-700 uppercase tracking-wider text-center">Gênero</th>
                     <th className="p-5 text-xs font-black text-emerald-700 uppercase tracking-wider text-center"><div className="flex items-center justify-center gap-2"><Calendar size={14} /> Nascimento</div></th>
-                    <th className="p-5 text-xs font-black text-emerald-700 uppercase tracking-wider text-center"><div className="flex items-center justify-center gap-2"><Calendar size={14} /> Semana</div></th>
+                    <th className="p-5 text-xs font-black text-emerald-700 uppercase tracking-wider text-center"><div className="flex items-center justify-center gap-2"><Calendar size={14} /> Data do batismo</div></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
@@ -829,7 +832,7 @@ export default function HistoricoPage() {
                       <td className="p-5"><span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-black uppercase border border-emerald-100">{row.ward_name}</span></td>
                       <td className="p-5 text-center"><span className="text-sm font-medium text-slate-500">{row.gender === 'M' ? 'Masculino' : row.gender === 'F' ? 'Feminino' : '—'}</span></td>
                       <td className="p-5 text-center"><span className="text-sm font-medium text-slate-500">{row.birth_date ? new Date(row.birth_date + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}</span></td>
-                      <td className="p-5 text-center"><span className="text-sm font-bold text-slate-600">{new Date(row.week_start + 'T12:00:00').toLocaleDateString('pt-BR')}</span></td>
+                      <td className="p-5 text-center"><span className="text-sm font-bold text-emerald-700">{row.baptism_date ? new Date(row.baptism_date + 'T12:00:00').toLocaleDateString('pt-BR') : new Date(row.week_start + 'T12:00:00').toLocaleDateString('pt-BR')}</span></td>
                     </tr>
                   ))}
                 </tbody>
@@ -853,7 +856,7 @@ export default function HistoricoPage() {
                   <div className="h-px bg-slate-100"></div>
                   <div className="grid grid-cols-2 gap-3">
                     <div><span className="text-[10px] font-bold text-slate-400 uppercase block">Nascimento</span><span className="text-xs font-bold text-slate-600">{row.birth_date ? new Date(row.birth_date + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}</span></div>
-                    <div><span className="text-[10px] font-bold text-slate-400 uppercase block">Semana</span><span className="text-xs font-bold text-slate-600">{new Date(row.week_start + 'T12:00:00').toLocaleDateString('pt-BR')}</span></div>
+                    <div><span className="text-[10px] font-bold text-emerald-500 uppercase block">Batismo</span><span className="text-xs font-bold text-emerald-700">{row.baptism_date ? new Date(row.baptism_date + 'T12:00:00').toLocaleDateString('pt-BR') : new Date(row.week_start + 'T12:00:00').toLocaleDateString('pt-BR')}</span></div>
                   </div>
                 </div>
               ))}
@@ -1093,13 +1096,26 @@ export default function HistoricoPage() {
                                   className="p-1 rounded text-rose-400 hover:bg-rose-50 shrink-0"><Trash2 size={13} /></button>
                               )}
                             </div>
-                            <div className="grid grid-cols-2 gap-2 ml-6">
-                              <input type="date" value={person.birth_date} onChange={e => updateNominalPerson(index, 'birth_date', e.target.value)}
-                                className="rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] font-medium text-slate-600 outline-none" title="Nascimento" />
-                              <select value={person.gender} onChange={e => updateNominalPerson(index, 'gender', e.target.value)}
-                                className="rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] font-medium text-slate-600 outline-none">
-                                <option value="">Gênero</option><option value="M">Masculino</option><option value="F">Feminino</option>
-                              </select>
+                            <div className={`grid ${isBaptismRow(editingRow) ? 'grid-cols-3' : 'grid-cols-2'} gap-2 ml-6`}>
+                              {isBaptismRow(editingRow) && (
+                                <div className="flex flex-col">
+                                  <span className="text-[9px] font-bold text-emerald-600 uppercase mb-0.5 tracking-wider">Batismo</span>
+                                  <input type="date" value={person.baptism_date || ''} onChange={e => updateNominalPerson(index, 'baptism_date', e.target.value)}
+                                    className="rounded-lg border border-emerald-200 px-2 py-1.5 text-[11px] font-medium text-emerald-700 outline-none focus:border-emerald-400" title="Data do batismo" />
+                                </div>
+                              )}
+                              <div className="flex flex-col">
+                                <span className="text-[9px] font-bold text-slate-500 uppercase mb-0.5 tracking-wider">Nascim.</span>
+                                <input type="date" value={person.birth_date} onChange={e => updateNominalPerson(index, 'birth_date', e.target.value)}
+                                  className="rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] font-medium text-slate-600 outline-none" title="Nascimento" />
+                              </div>
+                              <div className="flex flex-col">
+                                <span className="text-[9px] font-bold text-slate-500 uppercase mb-0.5 tracking-wider">Gênero</span>
+                                <select value={person.gender} onChange={e => updateNominalPerson(index, 'gender', e.target.value)}
+                                  className="rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] font-medium text-slate-600 outline-none">
+                                  <option value="">—</option><option value="M">Masculino</option><option value="F">Feminino</option>
+                                </select>
+                              </div>
                             </div>
                           </div>
                         ))}
