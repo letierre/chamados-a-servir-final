@@ -3,6 +3,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 export type ReportPeriod =
   | 'current_month' | 'last_month' | '90d' | '12m' | 'current_year'
 
+export type ReportType = 'summary' | 'nominal'
+export type NominalSource = 'baptism' | 'returning' | 'missionary'
+export type GenderFilter = 'all' | 'M' | 'F'
+
 export type ReportConfig = {
   id: string
   name: string
@@ -16,6 +20,12 @@ export type ReportConfig = {
   include_targets: boolean
   include_ranking: boolean
   is_active: boolean
+  // nominal
+  report_type?: ReportType
+  nominal_source?: NominalSource | null
+  age_min?: number | null
+  age_max?: number | null
+  gender_filter?: GenderFilter
 }
 
 const PERIOD_LABELS: Record<ReportPeriod, string> = {
@@ -66,7 +76,25 @@ type RpcRow = {
   responsibility: string; order_index: number; computed_value: number
 }
 
+// ═══════════════════════════════════════
+// DISPATCHER
+// ═══════════════════════════════════════
+
 export async function buildReportMessage(
+  supabase: SupabaseClient,
+  config: ReportConfig,
+): Promise<string> {
+  if (config.report_type === 'nominal') {
+    return buildNominalMessage(supabase, config)
+  }
+  return buildSummaryMessage(supabase, config)
+}
+
+// ═══════════════════════════════════════
+// RESUMO DE INDICADORES (padrão)
+// ═══════════════════════════════════════
+
+async function buildSummaryMessage(
   supabase: SupabaseClient,
   config: ReportConfig,
 ): Promise<string> {
@@ -209,3 +237,188 @@ export async function buildReportMessage(
 
   return lines.join('\n')
 }
+
+// ═══════════════════════════════════════
+// LISTA NOMINAL (batismos / retornando / missionários)
+// ═══════════════════════════════════════
+
+const NOMINAL_LABELS: Record<NominalSource, { title: string; emoji: string; dateLabel: string }> = {
+  baptism:    { title: 'Batismos realizados',         emoji: '✝️',  dateLabel: 'Semana' },
+  returning:  { title: 'Membros retornando',          emoji: '🙏',  dateLabel: 'Semana' },
+  missionary: { title: 'Missionários servindo',       emoji: '📖',  dateLabel: 'Missão' },
+}
+
+function calcAge(birthDate: string | null, refDate: Date): number | null {
+  if (!birthDate) return null
+  const b = new Date(birthDate + 'T12:00:00')
+  let age = refDate.getFullYear() - b.getFullYear()
+  const m = refDate.getMonth() - b.getMonth()
+  if (m < 0 || (m === 0 && refDate.getDate() < b.getDate())) age--
+  return age
+}
+
+function formatShortDate(iso: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso + 'T12:00:00')
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })
+}
+
+type NominalPerson = {
+  person_name: string
+  birth_date: string | null
+  gender: string | null
+  ward_id: string
+  date_ref: string | null
+}
+
+async function buildNominalMessage(
+  supabase: SupabaseClient,
+  config: ReportConfig,
+): Promise<string> {
+  const source = config.nominal_source
+  if (!source) throw new Error('Configuração nominal sem fonte (nominal_source).')
+
+  const { start, end } = getDateRange(config.period)
+  const ageRef = new Date()
+
+  // 1) Buscar registros + alas (para nomes)
+  const [wardsRes, recordsRes] = await Promise.all([
+    supabase.from('wards').select('id, name'),
+    fetchNominalRecords(supabase, source, start, end),
+  ])
+  if (recordsRes.error) throw new Error(`Fonte ${source}: ${recordsRes.error.message}`)
+
+  const wardMap = new Map<string, string>()
+  for (const w of (wardsRes.data as { id: string; name: string }[] || [])) wardMap.set(w.id, w.name)
+
+  // 2) Filtrar por alas (vazio = todas)
+  const filterByWards = config.ward_ids.length > 0
+  const wardSet = new Set(config.ward_ids)
+
+  const gender = config.gender_filter || 'all'
+  const ageMin = config.age_min ?? null
+  const ageMax = config.age_max ?? null
+
+  const people: Array<NominalPerson & { age: number | null; wardName: string }> = []
+  for (const r of (recordsRes.data || [])) {
+    if (filterByWards && !wardSet.has(r.ward_id)) continue
+    if (gender !== 'all' && r.gender !== gender) continue
+    const age = calcAge(r.birth_date, ageRef)
+    if (ageMin !== null && (age === null || age < ageMin)) continue
+    if (ageMax !== null && (age === null || age > ageMax)) continue
+    people.push({ ...r, age, wardName: wardMap.get(r.ward_id) || '—' })
+  }
+
+  // 3) Ordenar por ala e depois por data
+  people.sort((a, b) => {
+    const w = a.wardName.localeCompare(b.wardName)
+    if (w !== 0) return w
+    return (b.date_ref || '').localeCompare(a.date_ref || '')
+  })
+
+  // 4) Montar mensagem
+  const meta = NOMINAL_LABELS[source]
+  const lines: string[] = []
+  lines.push(`${meta.emoji} *${config.name}*`)
+  lines.push(`📋 ${meta.title}`)
+  lines.push(`📅 Período: ${PERIOD_LABELS[config.period]}`)
+
+  const filterBits: string[] = []
+  if (ageMin !== null && ageMax !== null) filterBits.push(`${ageMin}–${ageMax} anos`)
+  else if (ageMin !== null) filterBits.push(`a partir de ${ageMin} anos`)
+  else if (ageMax !== null) filterBits.push(`até ${ageMax} anos`)
+  if (gender === 'M') filterBits.push('Masculino')
+  else if (gender === 'F') filterBits.push('Feminino')
+  if (filterBits.length > 0) lines.push(`👥 Filtros: ${filterBits.join(' · ')}`)
+
+  if (filterByWards) {
+    const names = Array.from(new Set(config.ward_ids.map(id => wardMap.get(id)).filter(Boolean))) as string[]
+    lines.push(`🏛️ Alas: ${names.join(', ')}`)
+  } else {
+    lines.push(`🏛️ Estaca (todas as alas)`)
+  }
+
+  lines.push('')
+  lines.push('━━━━━━━━━━━━━━━')
+
+  if (people.length === 0) {
+    lines.push('')
+    lines.push('_Nenhum registro encontrado para os filtros selecionados._')
+  } else {
+    let currentWard = ''
+    for (const p of people) {
+      if (p.wardName !== currentWard) {
+        currentWard = p.wardName
+        lines.push('')
+        lines.push(`*${currentWard}*`)
+      }
+      const ageStr = p.age !== null ? `${p.age}a` : ''
+      const genderStr = p.gender === 'M' ? 'M' : p.gender === 'F' ? 'F' : ''
+      const meta = [ageStr, genderStr].filter(Boolean).join(' · ')
+      const dateStr = p.date_ref ? ` — ${formatShortDate(p.date_ref)}` : ''
+      lines.push(`• ${p.person_name}${meta ? ` (${meta})` : ''}${dateStr}`)
+    }
+    lines.push('')
+    lines.push(`📊 *Total: ${people.length} pessoa${people.length === 1 ? '' : 's'}*`)
+  }
+
+  lines.push('')
+  lines.push('━━━━━━━━━━━━━━━')
+  lines.push('')
+  const nowLabel = new Date().toLocaleString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  })
+  lines.push(`_Gerado em ${nowLabel}_`)
+  lines.push('_Chamados a Servir_')
+
+  return lines.join('\n')
+}
+
+async function fetchNominalRecords(
+  supabase: SupabaseClient,
+  source: NominalSource,
+  start: string,
+  end: string,
+): Promise<{ data: NominalPerson[] | null; error: { message: string } | null }> {
+  if (source === 'baptism') {
+    const res = await supabase
+      .from('baptism_records')
+      .select('person_name, birth_date, gender, ward_id, week_start')
+      .gte('week_start', start).lte('week_start', end)
+    return {
+      error: res.error,
+      data: (res.data as Array<{ person_name: string; birth_date: string | null; gender: string | null; ward_id: string; week_start: string }> | null)
+        ?.map(r => ({ ...r, date_ref: r.week_start })) ?? null,
+    }
+  }
+  if (source === 'returning') {
+    const res = await supabase
+      .from('returning_member_records')
+      .select('person_name, birth_date, gender, ward_id, week_start')
+      .gte('week_start', start).lte('week_start', end)
+    return {
+      error: res.error,
+      data: (res.data as Array<{ person_name: string; birth_date: string | null; gender: string | null; ward_id: string; week_start: string }> | null)
+        ?.map(r => ({ ...r, date_ref: r.week_start })) ?? null,
+    }
+  }
+  // missionary: sem birth_date, sem filtro por período padrão — usamos mission_start_date
+  const res = await supabase
+    .from('missionary_records')
+    .select('person_name, gender, ward_id, mission_start_date, mission_end_date')
+    .gte('mission_start_date', start).lte('mission_start_date', end)
+  return {
+    error: res.error,
+    data: (res.data as Array<{ person_name: string; gender: string | null; ward_id: string; mission_start_date: string | null; mission_end_date: string | null }> | null)
+      ?.map(r => ({
+        person_name: r.person_name,
+        birth_date: null,
+        gender: r.gender,
+        ward_id: r.ward_id,
+        date_ref: r.mission_start_date,
+      })) ?? null,
+  }
+}
+

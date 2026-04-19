@@ -13,6 +13,9 @@ import {
 
 type Frequency = 'daily' | 'weekly' | 'monthly'
 type Period = 'current_month' | 'last_month' | '90d' | '12m' | 'current_year'
+type ReportType = 'summary' | 'nominal'
+type NominalSource = 'baptism' | 'returning' | 'missionary'
+type GenderFilter = 'all' | 'M' | 'F'
 
 type Ward = { id: string; name: string }
 type Indicator = { id: string; slug: string; display_name: string; order_index: number }
@@ -30,6 +33,11 @@ type ReportConfig = {
   include_targets: boolean
   include_ranking: boolean
   is_active: boolean
+  report_type: ReportType
+  nominal_source: NominalSource | null
+  age_min: number | null
+  age_max: number | null
+  gender_filter: GenderFilter
   last_sent_at: string | null
   last_send_status: string | null
   created_at: string
@@ -49,6 +57,11 @@ type FormState = {
   include_targets: boolean
   include_ranking: boolean
   is_active: boolean
+  report_type: ReportType
+  nominal_source: NominalSource
+  age_min: string
+  age_max: string
+  gender_filter: GenderFilter
 }
 
 // ═══════════════════════════════════════
@@ -65,6 +78,12 @@ const PERIOD_LABELS: Record<Period, string> = {
 
 const WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
+const NOMINAL_SOURCE_LABELS: Record<NominalSource, string> = {
+  baptism: 'Batismos',
+  returning: 'Retornando',
+  missionary: 'Missionários',
+}
+
 const DEFAULT_FORM: FormState = {
   name: '',
   recipient_whatsapp: '',
@@ -77,6 +96,11 @@ const DEFAULT_FORM: FormState = {
   include_targets: true,
   include_ranking: true,
   is_active: true,
+  report_type: 'summary',
+  nominal_source: 'baptism',
+  age_min: '',
+  age_max: '',
+  gender_filter: 'all',
 }
 
 // ═══════════════════════════════════════
@@ -154,13 +178,18 @@ export default function RelatoriosPage() {
       recipient_whatsapp: cfg.recipient_whatsapp,
       frequency: cfg.frequency,
       send_time: cfg.send_time || '08:00',
-      send_day: cfg.send_day ?? (cfg.frequency === 'monthly' ? 1 : 1),
+      send_day: cfg.send_day ?? 1,
       indicators: cfg.indicators || [],
       ward_ids: cfg.ward_ids || [],
       period: cfg.period,
       include_targets: cfg.include_targets,
       include_ranking: cfg.include_ranking,
       is_active: cfg.is_active,
+      report_type: cfg.report_type || 'summary',
+      nominal_source: (cfg.nominal_source as NominalSource) || 'baptism',
+      age_min: cfg.age_min !== null && cfg.age_min !== undefined ? String(cfg.age_min) : '',
+      age_max: cfg.age_max !== null && cfg.age_max !== undefined ? String(cfg.age_max) : '',
+      gender_filter: cfg.gender_filter || 'all',
     })
     setModalOpen(true)
   }
@@ -168,21 +197,29 @@ export default function RelatoriosPage() {
   async function handleSave() {
     if (!form.name.trim()) return showToast('error', 'Dê um nome ao relatório.')
     if (!form.recipient_whatsapp.trim()) return showToast('error', 'Informe o número do WhatsApp.')
-    if (form.indicators.length === 0) return showToast('error', 'Selecione ao menos um indicador.')
+    if (form.report_type === 'summary' && form.indicators.length === 0) {
+      return showToast('error', 'Selecione ao menos um indicador.')
+    }
 
     setSaving(true)
+    const isNominal = form.report_type === 'nominal'
     const payload = {
       name: form.name.trim(),
       recipient_whatsapp: form.recipient_whatsapp.replace(/\D/g, ''),
       frequency: form.frequency,
       send_time: form.send_time,
       send_day: form.frequency === 'daily' ? null : form.send_day,
-      indicators: form.indicators,
+      indicators: isNominal ? [] : form.indicators,
       ward_ids: form.ward_ids,
       period: form.period,
-      include_targets: form.include_targets,
-      include_ranking: form.include_ranking,
+      include_targets: isNominal ? false : form.include_targets,
+      include_ranking: isNominal ? false : form.include_ranking,
       is_active: form.is_active,
+      report_type: form.report_type,
+      nominal_source: isNominal ? form.nominal_source : null,
+      age_min: isNominal && form.age_min !== '' ? Number(form.age_min) : null,
+      age_max: isNominal && form.age_max !== '' ? Number(form.age_max) : null,
+      gender_filter: isNominal ? form.gender_filter : 'all',
     }
 
     const res = form.id
@@ -384,15 +421,35 @@ function ReportCard({
       </div>
 
       <div className="mt-3 flex flex-wrap gap-1">
-        {indicatorNames.slice(0, 3).map(n => (
-          <span key={n} className="px-2 py-0.5 bg-sky-50 text-sky-700 text-xs rounded-full">
-            {n.length > 22 ? n.slice(0, 20) + '…' : n}
-          </span>
-        ))}
-        {indicatorNames.length > 3 && (
-          <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full">
-            +{indicatorNames.length - 3}
-          </span>
+        {cfg.report_type === 'nominal' ? (
+          <>
+            <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-xs rounded-full font-semibold">
+              📋 {cfg.nominal_source ? NOMINAL_SOURCE_LABELS[cfg.nominal_source] : 'Lista'}
+            </span>
+            {(cfg.age_min !== null || cfg.age_max !== null) && (
+              <span className="px-2 py-0.5 bg-gray-100 text-gray-700 text-xs rounded-full">
+                {cfg.age_min ?? '—'}–{cfg.age_max ?? '—'} anos
+              </span>
+            )}
+            {cfg.gender_filter && cfg.gender_filter !== 'all' && (
+              <span className="px-2 py-0.5 bg-gray-100 text-gray-700 text-xs rounded-full">
+                {cfg.gender_filter === 'M' ? 'Masculino' : 'Feminino'}
+              </span>
+            )}
+          </>
+        ) : (
+          <>
+            {indicatorNames.slice(0, 3).map(n => (
+              <span key={n} className="px-2 py-0.5 bg-sky-50 text-sky-700 text-xs rounded-full">
+                {n.length > 22 ? n.slice(0, 20) + '…' : n}
+              </span>
+            ))}
+            {indicatorNames.length > 3 && (
+              <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded-full">
+                +{indicatorNames.length - 3}
+              </span>
+            )}
+          </>
         )}
       </div>
 
@@ -489,6 +546,35 @@ function ReportModal({
 
         {/* Body */}
         <div className="px-6 py-5 space-y-5 overflow-y-auto">
+          {/* Tipo do relatório */}
+          <Field label="Tipo de relatório">
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { value: 'summary' as const, title: 'Resumo de Indicadores', desc: 'Números, metas e ranking' },
+                { value: 'nominal' as const, title: 'Lista de Nomes', desc: 'Batismos, retornando, missionários' },
+              ]).map(opt => {
+                const active = form.report_type === opt.value
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setForm({ ...form, report_type: opt.value })}
+                    className={`text-left px-4 py-3 rounded-xl border transition-colors ${
+                      active
+                        ? 'bg-sky-50 border-sky-400 ring-2 ring-sky-200'
+                        : 'bg-white border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <div className={`font-semibold text-sm ${active ? 'text-sky-800' : 'text-gray-800'}`}>
+                      {opt.title}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5">{opt.desc}</div>
+                  </button>
+                )
+              })}
+            </div>
+          </Field>
+
           {/* Nome + Whatsapp */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Field label="Nome do relatório">
@@ -573,32 +659,104 @@ function ReportModal({
             </select>
           </Field>
 
-          {/* Indicadores */}
-          <Field label={`Indicadores (${form.indicators.length}/${indicators.length})`}>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {indicators.map(ind => {
-                const checked = form.indicators.includes(ind.slug)
-                return (
-                  <label
-                    key={ind.id}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm transition-colors ${
-                      checked
-                        ? 'bg-sky-50 border-sky-200 text-sky-800'
-                        : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300'
-                    }`}
+          {/* Indicadores (somente resumo) */}
+          {form.report_type === 'summary' && (
+            <Field label={`Indicadores (${form.indicators.length}/${indicators.length})`}>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {indicators.map(ind => {
+                  const checked = form.indicators.includes(ind.slug)
+                  return (
+                    <label
+                      key={ind.id}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm transition-colors ${
+                        checked
+                          ? 'bg-sky-50 border-sky-200 text-sky-800'
+                          : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleIndicator(ind.slug)}
+                        className="accent-sky-600"
+                      />
+                      <span className="truncate">{ind.display_name}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            </Field>
+          )}
+
+          {/* Fonte + filtros nominais (somente lista de nomes) */}
+          {form.report_type === 'nominal' && (
+            <>
+              <Field label="Fonte dos nomes">
+                <div className="grid grid-cols-3 gap-2">
+                  {(Object.keys(NOMINAL_SOURCE_LABELS) as NominalSource[]).map(src => {
+                    const active = form.nominal_source === src
+                    return (
+                      <button
+                        key={src}
+                        type="button"
+                        onClick={() => setForm({ ...form, nominal_source: src })}
+                        className={`px-3 py-2 rounded-lg border text-sm font-semibold transition-colors ${
+                          active
+                            ? 'bg-indigo-50 border-indigo-400 text-indigo-800 ring-2 ring-indigo-200'
+                            : 'bg-white border-gray-200 text-gray-700 hover:border-gray-300'
+                        }`}
+                      >
+                        {NOMINAL_SOURCE_LABELS[src]}
+                      </button>
+                    )
+                  })}
+                </div>
+              </Field>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Field label="Idade mínima">
+                  <input
+                    type="number"
+                    min={0}
+                    max={120}
+                    value={form.age_min}
+                    onChange={e => setForm({ ...form, age_min: e.target.value })}
+                    placeholder="Ex: 18"
+                    className="input"
+                    disabled={form.nominal_source === 'missionary'}
+                  />
+                </Field>
+                <Field label="Idade máxima">
+                  <input
+                    type="number"
+                    min={0}
+                    max={120}
+                    value={form.age_max}
+                    onChange={e => setForm({ ...form, age_max: e.target.value })}
+                    placeholder="Ex: 30"
+                    className="input"
+                    disabled={form.nominal_source === 'missionary'}
+                  />
+                </Field>
+                <Field label="Gênero">
+                  <select
+                    value={form.gender_filter}
+                    onChange={e => setForm({ ...form, gender_filter: e.target.value as GenderFilter })}
+                    className="input"
                   >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleIndicator(ind.slug)}
-                      className="accent-sky-600"
-                    />
-                    <span className="truncate">{ind.display_name}</span>
-                  </label>
-                )
-              })}
-            </div>
-          </Field>
+                    <option value="all">Todos</option>
+                    <option value="M">Masculino</option>
+                    <option value="F">Feminino</option>
+                  </select>
+                </Field>
+              </div>
+              {form.nominal_source === 'missionary' && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  ⚠️ Missionários não possuem data de nascimento — filtro de idade é ignorado.
+                </p>
+              )}
+            </>
+          )}
 
           {/* Alas */}
           <Field label={`Alas — deixe vazio para Estaca (${form.ward_ids.length} selecionadas)`}>
@@ -629,24 +787,28 @@ function ReportModal({
 
           {/* Toggles */}
           <div className="flex flex-wrap gap-6 pt-2">
-            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={form.include_targets}
-                onChange={e => setForm({ ...form, include_targets: e.target.checked })}
-                className="accent-sky-600 w-4 h-4"
-              />
-              Incluir metas e progresso
-            </label>
-            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={form.include_ranking}
-                onChange={e => setForm({ ...form, include_ranking: e.target.checked })}
-                className="accent-sky-600 w-4 h-4"
-              />
-              Incluir ranking por ala
-            </label>
+            {form.report_type === 'summary' && (
+              <>
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.include_targets}
+                    onChange={e => setForm({ ...form, include_targets: e.target.checked })}
+                    className="accent-sky-600 w-4 h-4"
+                  />
+                  Incluir metas e progresso
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.include_ranking}
+                    onChange={e => setForm({ ...form, include_ranking: e.target.checked })}
+                    className="accent-sky-600 w-4 h-4"
+                  />
+                  Incluir ranking por ala
+                </label>
+              </>
+            )}
             <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
               <input
                 type="checkbox"
