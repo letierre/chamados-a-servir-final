@@ -6,13 +6,14 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 // CORREÇÃO 1: Importar do seu lib local
 import { createClient } from '../../lib/supabase/client' 
-import { 
-  LayoutDashboard, 
-  History, 
-  FileText, 
-  LogOut, 
-  ChevronLeft, 
-  ChevronRight 
+import {
+  LayoutDashboard,
+  History,
+  FileText,
+  MessageSquare,
+  LogOut,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react'
 
 export default function Sidebar() {
@@ -48,6 +49,7 @@ export default function Sidebar() {
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
     { name: 'Lançamentos', path: '/lancamentos', icon: FileText },
     { name: 'Histórico', path: '/historico', icon: History },
+    { name: 'Relatórios', path: '/relatorios', icon: MessageSquare },
   ]
 
   return (

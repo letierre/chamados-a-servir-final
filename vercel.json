@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/relatorios/cron",
+      "schedule": "0 * * * *"
+    }
+  ]
+}
