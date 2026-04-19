@@ -230,7 +230,6 @@ export default function LancamentosPage() {
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState<Toast>(null)
   const [formError, setFormError] = useState<string | null>(null)
-  const [linkOpened, setLinkOpened] = useState(false)
   const [showConfPopover, setShowConfPopover] = useState(false)
   const [savingConf, setSavingConf] = useState(false)
 
@@ -264,16 +263,12 @@ export default function LancamentosPage() {
     ? INDICATOR_LINKS[selectedSlug]?.(selectedWard.name) ?? null
     : null
 
-  useEffect(() => {
-    if (quickLink && wardId && indicatorId && !linkOpened) {
-      window.open(quickLink, '_blank', 'noopener')
-      setLinkOpened(true)
-    }
-  }, [quickLink, wardId, indicatorId, linkOpened])
+  // Iframe inline do link do site da Igreja (pode ser bloqueado por X-Frame-Options)
+  const [showFrame, setShowFrame] = useState(true)
+  useEffect(() => { setShowFrame(true) }, [quickLink])
 
   // Reset ao mudar ala ou indicador
   useEffect(() => {
-    setLinkOpened(false)
     setFormError(null)
     setValueRecomSem('')
     setMembershipCount('')
@@ -983,18 +978,45 @@ export default function LancamentosPage() {
                   </div>
                 </div>
 
-                {/* Quick Link */}
+                {/* Quick Link — iframe inline do site da Igreja */}
                 {quickLink && (
-                  <div className="flex items-center gap-3 p-4 bg-sky-50 border border-sky-100 rounded-2xl animate-in fade-in slide-in-from-top-2">
-                    <BookOpen size={18} className="text-sky-600 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-bold text-sky-800">{linkOpened ? 'Link aberto em nova aba!' : 'Abrindo o site da Igreja...'}</p>
-                      <p className="text-[10px] text-sky-600 truncate">{quickLink}</p>
+                  <div className="bg-sky-50 border border-sky-100 rounded-2xl overflow-hidden animate-in fade-in slide-in-from-top-2">
+                    <div className="flex items-center gap-3 p-3">
+                      <BookOpen size={18} className="text-sky-600 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-bold text-sky-800">Site da Igreja (inline)</p>
+                        <p className="text-[10px] text-sky-600 truncate">{quickLink}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowFrame(v => !v)}
+                        className="shrink-0 px-2.5 py-1.5 bg-white border border-sky-200 text-sky-700 text-xs font-bold rounded-lg hover:bg-sky-100 transition-all"
+                      >
+                        {showFrame ? 'Ocultar' : 'Mostrar'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => window.open(quickLink, '_blank', 'noopener')}
+                        className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 text-white text-xs font-bold rounded-lg hover:bg-sky-700 transition-all"
+                      >
+                        <ExternalLink size={14} /> Nova aba
+                      </button>
                     </div>
-                    <button type="button" onClick={() => window.open(quickLink, '_blank', 'noopener')}
-                      className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-sky-600 text-white text-xs font-bold rounded-xl hover:bg-sky-700 transition-all">
-                      <ExternalLink size={14} /> Abrir
-                    </button>
+                    {showFrame && (
+                      <div className="border-t border-sky-100 bg-white">
+                        <iframe
+                          src={quickLink}
+                          className="w-full"
+                          style={{ height: '600px', border: 'none' }}
+                          referrerPolicy="no-referrer-when-downgrade"
+                          sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+                          title="Site da Igreja"
+                        />
+                        <p className="text-[10px] text-amber-700 bg-amber-50 border-t border-amber-200 px-3 py-2">
+                          ⚠️ Se o quadro ficar em branco, o site da Igreja bloqueia carregamento embutido. Use o botão <strong>Nova aba</strong>.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
 

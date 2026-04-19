@@ -45,11 +45,11 @@ export default function Sidebar() {
     }
   }
 
-  const menuItems = [
+  const menuItems: Array<{ name: string; path: string; icon: typeof LayoutDashboard; badge?: string }> = [
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
     { name: 'Lançamentos', path: '/lancamentos', icon: FileText },
     { name: 'Histórico', path: '/historico', icon: History },
-    { name: 'Relatórios', path: '/relatorios', icon: MessageSquare },
+    { name: 'Relatórios', path: '/relatorios', icon: MessageSquare, badge: 'Em breve' },
   ]
 
   return (
@@ -105,10 +105,17 @@ export default function Sidebar() {
               
               {!isCollapsed && (
                 <span className={`
-                  font-semibold text-sm antialiased whitespace-nowrap hidden md:block transition-opacity duration-300
-                  ${isActive ? 'text-white' : ''} 
+                  font-semibold text-sm antialiased whitespace-nowrap hidden md:flex items-center gap-2 transition-opacity duration-300
+                  ${isActive ? 'text-white' : ''}
                 `}>
                   {item.name}
+                  {item.badge && (
+                    <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold leading-none ${
+                      isActive ? 'bg-white/25 text-white' : 'bg-amber-100 text-amber-800'
+                    }`}>
+                      {item.badge}
+                    </span>
+                  )}
                 </span>
               )}
 
